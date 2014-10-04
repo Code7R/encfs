@@ -2,8 +2,8 @@ Source: encfs
 Section: utils
 Priority: optional
 Maintainer: Eduard Bloch <blade@debian.org>
-Build-Depends: debhelper (>= 5.0), librlog-dev, librlog5, libfuse-dev (>> 2.6), libssl-dev (>> 0.9.8), pkg-config, libboost-serialization-dev, libboost-filesystem-dev, quilt, dpkg-dev (>= 1.16.0)
-Standards-Version: 3.9.1
+Build-Depends: debhelper (>= 7.0), librlog-dev, librlog5, libfuse-dev (>> 2.6), libssl-dev (>> 0.9.8), pkg-config, libboost-serialization-dev, libboost-filesystem-dev, dpkg-dev (>= 1.17)
+Standards-Version: 3.9.5
 Homepage: http://www.arg0.net/encfs
 
 Package: encfs
