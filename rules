@@ -10,7 +10,7 @@ include /usr/share/dpkg/architecture.mk
 -include /usr/share/quilt/quilt.make
 
 %:
-	dh $@
+	dh $@ --with autotools_dev
 
 override_dh_auto_configure:
 	dh_auto_configure -- --with-boost-libdir=/usr/lib/$(DEB_HOST_MULTIARCH)
