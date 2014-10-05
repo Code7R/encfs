@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: encfs\n"
 "Report-Msgid-Bugs-To: encfs@packages.debian.org\n"
-"POT-Creation-Date: 2014-09-28 23:32+0200\n"
+"POT-Creation-Date: 2014-10-05 13:06+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,29 +17,29 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#. Type: string
+#. Type: error
 #. Description
 #: ../encfs.templates:1001
-msgid "Encfs Security Information"
+msgid "Encfs security information"
 msgstr ""
 
-#. Type: string
+#. Type: error
 #. Description
 #: ../encfs.templates:1001
 msgid ""
 "According to a security audit by Taylor Hornby (Defuse Security), the "
 "current implementation of Encfs is vulnerable or potentially vulnerable to "
-"multiple attacks on the encrypted data. This especially affects use cases "
-"where the attacker has read/write access to the encrypted directory or has "
-"enough knowledge of the unencrypted file system contents."
+"multiple types of attacks. For example, an attacker with read/write access "
+"to encrypted data might lower the decryption complexity for subsequently "
+"encrypted data without being noticed or compute encryption information by "
+"timing analysis."
 msgstr ""
 
-#. Type: string
+#. Type: error
 #. Description
 #: ../encfs.templates:1001
 msgid ""
-"Considering the current situation, encfs should not be considered a safe "
-"home for sensible data. This package should be only used to retrieve "
-"information from previously encrypted sources, and even this action contains "
-"some risk of receiving compromised data."
+"Until these security issues are solved, encfs should not be considered a "
+"safe home for sensitive data in certain environments and this package should "
+"be used only for retrieval of information from previously encrypted sources."
 msgstr ""
