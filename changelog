@@ -1,10 +1,12 @@
-encfs (1.7.4-4) UNRELEASED; urgency=medium
+encfs (1.7.4-4) unstable; urgency=medium
 
   * Switched packaging to dh(7) style
   * Enabled hardening
   * Policy standards update
+  * Added Debconf warning and explanation in NEWS.Debian about data
+    safety issues
 
- -- Eduard Bloch <blade@debian.org>  Wed, 02 Apr 2014 20:38:34 +0200
+ -- Eduard Bloch <blade@debian.org>  Tue, 07 Oct 2014 20:05:57 +0200
 
 encfs (1.7.4-3.1) unstable; urgency=medium
 
