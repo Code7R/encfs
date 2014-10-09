@@ -1,3 +1,9 @@
+encfs (1.7.4-5) UNRELEASED; urgency=medium
+
+  * No LTO for mips* architectures, triggers compilation errors
+
+ -- Eduard Bloch <blade@debian.org>  Thu, 09 Oct 2014 17:13:21 +0200
+
 encfs (1.7.4-4) unstable; urgency=medium
 
   * Switched packaging to dh(7) style
