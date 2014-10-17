@@ -1,7 +1,7 @@
 encfs (1.7.4-4.2) UNRELEASED; urgency=medium
 
-  * Dropped additional display of the security warning in postinst, the one in
-    config is flashy enough (user complaint)
+  * Changed the security information message code to display it only once
+    (user complaint; this plus the NEWS message are flashy enough)
   * New debconf translations:
     Russian from Yuri Kozlov (closes: #764610)
     Czech from Michal Simunek (closes: #764685)
@@ -9,7 +9,7 @@ encfs (1.7.4-4.2) UNRELEASED; urgency=medium
     German from Chris Leick (closes: #765170)
     Brazilian Portuguese from Adriano Rafael (closes: #765700)
 
- -- Eduard Bloch <blade@debian.org>  Thu, 09 Oct 2014 17:13:21 +0200
+ -- Eduard Bloch <blade@debian.org>  Fri, 17 Oct 2014 21:07:15 +0200
 
 encfs (1.7.4-4.1) unstable; urgency=medium
 
