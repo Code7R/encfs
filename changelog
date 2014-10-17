@@ -1,4 +1,4 @@
-encfs (1.7.4-4.2) UNRELEASED; urgency=medium
+encfs (1.7.4-5) unstable; urgency=medium
 
   * Changed the security information message code to display it only once
     (user complaint; this plus the NEWS message are flashy enough)
