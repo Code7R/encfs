@@ -1,6 +1,8 @@
 encfs (1.7.4-5) UNRELEASED; urgency=medium
 
   * No LTO for mips* architectures, triggers compilation errors
+  * Dropped additional display of the security warning in postinst, the one in
+    config is flashy enough (user complaint)
 
  -- Eduard Bloch <blade@debian.org>  Thu, 09 Oct 2014 17:13:21 +0200
 
