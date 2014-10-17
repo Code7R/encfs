@@ -5,11 +5,11 @@ include /usr/share/dpkg/buildflags.mk
 include /usr/share/dpkg/architecture.mk
 -include /usr/share/quilt/quilt.make
 
-ifeq (,$(findstring mips,$(DEB_HOST_MULTIARCH)))
+#ifeq (,$(findstring mips,$(DEB_HOST_MULTIARCH)))
 CFLAGS += -flto
 CXXFLAGS += -flto
 LDFLAGS += -flto
-endif
+#endif
 
 %:
 	dh $@ --with autotools_dev
