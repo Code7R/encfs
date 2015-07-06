@@ -1,0 +1,4 @@
+fix_bashisms
+i18n_updates
+pod2man_ignoreerr
+use-pic-flag.patch

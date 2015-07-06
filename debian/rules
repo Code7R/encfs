@@ -1,0 +1,22 @@
+#!/usr/bin/make -f
+
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/buildflags.mk
+include /usr/share/dpkg/architecture.mk
+-include /usr/share/quilt/quilt.make
+
+#ifeq (,$(findstring mips,$(DEB_HOST_MULTIARCH)))
+CFLAGS += -flto
+CXXFLAGS += -flto
+LDFLAGS += -flto
+#endif
+
+%:
+	dh $@ --with autotools_dev
+
+override_dh_auto_configure:
+	dh_auto_configure -- --with-boost-libdir=/usr/lib/$(DEB_HOST_MULTIARCH)
+
+override_dh_auto_install:
+	dh_auto_install
+	rm -f debian/encfs/usr/lib/libencfs.la
