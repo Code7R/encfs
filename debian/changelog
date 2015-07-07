@@ -1,6 +1,13 @@
 encfs (1.8.1-1) UNRELEASED; urgency=medium
 
   * New upstream version
+    + supports --delaymount (closes: #724045)
+  * New debconf translations:
+    Italian (Beatrice Torracca, closes: #765796)
+    French (Julien Patriarca, closes: #766018)
+    Dutch (Frans Spiesschaert, closes: #766541)
+    Portuguese (Traduz!, Ricardo Silva, closes: #767396)
+    Spanish (Camaleón, closes: #773460)
 
  -- Eduard Bloch <blade@debian.org>  Tue, 07 Jul 2015 00:11:27 +0200
 
