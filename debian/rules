@@ -20,3 +20,10 @@ override_dh_auto_configure:
 override_dh_auto_install:
 	dh_auto_install
 	rm -f debian/encfs/usr/lib/libencfs.la
+
+ifneq ($(DOENCFSTESTS),FORCE)
+# needs configured fuse -> ignore
+override_dh_auto_test:
+	true
+endif
+
