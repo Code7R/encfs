@@ -21,46 +21,50 @@
 #ifndef _NameIO_incl_
 #define _NameIO_incl_
 
-#include <string>
-#include <list>
-
 #include <inttypes.h>
+#include <list>
+#include <memory>
+#include <stdint.h>
+#include <string.h>
+#include <string>
 
-#include "Interface.h"
 #include "CipherKey.h"
+#include "Interface.h"
+
+namespace encfs {
 
 class Cipher;
 
 class NameIO {
  public:
-  typedef shared_ptr<NameIO>(*Constructor)(const rel::Interface &iface,
-                                           const shared_ptr<Cipher> &cipher,
-                                           const CipherKey &key);
+  typedef std::shared_ptr<NameIO> (*Constructor)(
+      const Interface &iface, const std::shared_ptr<Cipher> &cipher,
+      const CipherKey &key);
 
   struct Algorithm {
     std::string name;
     std::string description;
-    rel::Interface iface;
+    Interface iface;
   };
 
   typedef std::list<Algorithm> AlgorithmList;
   static AlgorithmList GetAlgorithmList(bool includeHidden = false);
 
-  static shared_ptr<NameIO> New(const rel::Interface &iface,
-                                const shared_ptr<Cipher> &cipher,
-                                const CipherKey &key);
-  static shared_ptr<NameIO> New(const std::string &name,
-                                const shared_ptr<Cipher> &cipher,
-                                const CipherKey &key);
+  static std::shared_ptr<NameIO> New(const Interface &iface,
+                                     const std::shared_ptr<Cipher> &cipher,
+                                     const CipherKey &key);
+  static std::shared_ptr<NameIO> New(const std::string &name,
+                                     const std::shared_ptr<Cipher> &cipher,
+                                     const CipherKey &key);
 
   static bool Register(const char *name, const char *description,
-                       const rel::Interface &iface, Constructor constructor,
+                       const Interface &iface, Constructor constructor,
                        bool hidden = false);
 
   NameIO();
   virtual ~NameIO();
 
-  virtual rel::Interface interface() const = 0;
+  virtual Interface interface() const = 0;
 
   void setChainedNameIV(bool enable);
   bool getChainedNameIV() const;
@@ -81,19 +85,20 @@ class NameIO {
 
  protected:
   virtual int encodeName(const char *plaintextName, int length,
-                         char *encodedName) const;
+                         char *encodedName, int bufferLength) const;
   virtual int decodeName(const char *encodedName, int length,
-                         char *plaintextName) const;
+                         char *plaintextName, int bufferLength) const;
 
   virtual int encodeName(const char *plaintextName, int length, uint64_t *iv,
-                         char *encodedName) const = 0;
+                         char *encodedName, int bufferLength) const = 0;
   virtual int decodeName(const char *encodedName, int length, uint64_t *iv,
-                         char *plaintextName) const = 0;
+                         char *plaintextName, int bufferLength) const = 0;
 
  private:
   std::string recodePath(const char *path, int (NameIO::*codingLen)(int) const,
                          int (NameIO::*codingFunc)(const char *, int,
-                                                   uint64_t *, char *) const,
+                                                   uint64_t *, char *, int)
+                             const,
                          uint64_t *iv) const;
 
   std::string _encodePath(const char *plaintextPath, uint64_t *iv) const;
@@ -118,6 +123,16 @@ class NameIO {
   if (sizeof(Name##_Raw) < Size) Name = new char[Size]; \
   memset(Name, 0, Size);
 
+#define BUFFER_INIT_S(Name, OptimizedSize, Size, BufSize) \
+  char Name##_Raw[OptimizedSize];                         \
+  BufSize = sizeof(Name##_Raw);                           \
+  char *Name = Name##_Raw;                                \
+  if (sizeof(Name##_Raw) < Size) {                        \
+    Name = new char[Size];                                \
+    BufSize = Size;                                       \
+  }                                                       \
+  memset(Name, 0, Size);
+
 #define BUFFER_RESET(Name)    \
   do {                        \
     if (Name != Name##_Raw) { \
@@ -125,5 +140,7 @@ class NameIO {
       Name = Name##_Raw;      \
     }                         \
   } while (0);
+
+}  // namespace encfs
 
 #endif

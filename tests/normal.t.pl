@@ -2,7 +2,7 @@
 
 # Test EncFS normal and paranoid mode
 
-use Test::More tests => 103;
+use Test::More tests => 104;
 use File::Path;
 use File::Copy;
 use File::Temp;
@@ -11,9 +11,6 @@ use IO::Handle;
 require("tests/common.pl");
 
 my $tempDir = $ENV{'TMPDIR'} || "/tmp";
-
-# run unit tests
-ok( system("./encfs/test 2> /dev/null") == 0, "unit tests");
 
 # test filesystem in standard config mode
 &runTests('standard');
@@ -49,6 +46,7 @@ sub runTests
     &renames;
     &internalModification;
     &grow;
+    &umask0777;
 
     &cleanup;
 }
@@ -264,7 +262,7 @@ sub checkContents
 sub encName
 {
     my $plain = shift;
-    my $enc = qx(./encfs/encfsctl encode --extpass="echo test" $raw $plain);
+    my $enc = qx(./build/encfsctl encode --extpass="echo test" $raw $plain);
     chomp($enc);
     return $enc;
 }
@@ -307,7 +305,7 @@ sub mount
     mkdir($crypt)  || BAIL_OUT("Could not create $crypt: $!");
 
     delete $ENV{"ENCFS6_CONFIG"};
-    my $cmdline = "./encfs/encfs --extpass=\"echo test\" $args $raw $crypt 2>&1";
+    my $cmdline = "./build/encfs --extpass=\"echo test\" $args $raw $crypt 2>&1";
     #                                  This makes sure we get to see stderr ^
     my $status = system($cmdline);
     ok( $status == 0, "encfs command returns 0") || BAIL_OUT("");
@@ -327,3 +325,12 @@ sub cleanup
     ok( ! -d $workingDir, "working dir removed");
 }
 
+# Test that we can create and write to a a file even if umask is set to 0777
+# Regression test for bug https://github.com/vgough/encfs/issues/181
+sub umask0777
+{
+    my $old = umask(0777);
+    ok(open(my $fh, "+>$crypt/umask0777"), "open with umask 0777");
+    close($fh);
+    umask($old);
+}

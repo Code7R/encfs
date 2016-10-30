@@ -21,21 +21,26 @@
 #ifndef _NullCipher_incl_
 #define _NullCipher_incl_
 
+#include <stdint.h>
+
 #include "Cipher.h"
+#include "CipherKey.h"
 #include "Interface.h"
+
+namespace encfs {
 
 /*
     Implements Cipher interface for a pass-through mode.  May be useful for
     testing, but that's it.
 */
 class NullCipher : public Cipher {
-  rel::Interface iface;
+  Interface iface;
 
  public:
-  NullCipher(const rel::Interface &iface);
+  NullCipher(const Interface &iface);
   virtual ~NullCipher();
 
-  virtual rel::Interface interface() const;
+  virtual Interface interface() const;
 
   // create a new key based on a password
   virtual CipherKey newKey(const char *password, int passwdLength,
@@ -76,5 +81,7 @@ class NullCipher : public Cipher {
   // hack to help with static builds
   static bool Enabled();
 };
+
+}  // namespace encfs
 
 #endif

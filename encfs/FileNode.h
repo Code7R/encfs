@@ -21,17 +21,23 @@
 #ifndef _FileNode_incl_
 #define _FileNode_incl_
 
-#include "encfs.h"
-#include "CipherKey.h"
-#include "FileUtils.h"
-
 #include <inttypes.h>
-#include <sys/types.h>
+#include <memory>
+#include <pthread.h>
+#include <stdint.h>
 #include <string>
+#include <sys/types.h>
+
+#include "CipherKey.h"
+#include "FSConfig.h"
+#include "FileUtils.h"
+#include "encfs.h"
+
+namespace encfs {
 
 class Cipher;
-class FileIO;
 class DirNode;
+class FileIO;
 
 class FileNode {
  public:
@@ -81,7 +87,7 @@ class FileNode {
 
   FSConfigPtr fsConfig;
 
-  shared_ptr<FileIO> io;
+  std::shared_ptr<FileIO> io;
   std::string _pname;  // plaintext name
   std::string _cname;  // encrypted name
   DirNode *parent;
@@ -90,5 +96,7 @@ class FileNode {
   FileNode(const FileNode &src);
   FileNode &operator=(const FileNode &src);
 };
+
+}  // namespace encfs
 
 #endif

@@ -18,16 +18,15 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <rlog/rlog.h>
+#include "internal/easylogging++.h"
+#include <utility>
 
 #include "Context.h"
 #include "DirNode.h"
-#include "FileNode.h"
-#include "FileUtils.h"
+#include "Error.h"
 #include "Mutex.h"
 
-using namespace rel;
-using namespace rlog;
+namespace encfs {
 
 EncFS_Context::EncFS_Context() {
   pthread_cond_init(&wakeupCond, 0);
@@ -45,9 +44,8 @@ EncFS_Context::~EncFS_Context() {
   // release all entries from map
   openFiles.clear();
 }
-
-shared_ptr<DirNode> EncFS_Context::getRoot(int *errCode) {
-  shared_ptr<DirNode> ret;
+std::shared_ptr<DirNode> EncFS_Context::getRoot(int *errCode) {
+  std::shared_ptr<DirNode> ret;
   do {
     {
       Lock lock(contextMutex);
@@ -67,7 +65,7 @@ shared_ptr<DirNode> EncFS_Context::getRoot(int *errCode) {
   return ret;
 }
 
-void EncFS_Context::setRoot(const shared_ptr<DirNode> &r) {
+void EncFS_Context::setRoot(const std::shared_ptr<DirNode> &r) {
   Lock lock(contextMutex);
 
   root = r;
@@ -90,18 +88,16 @@ int EncFS_Context::openFileCount() const {
 
   return openFiles.size();
 }
-
-shared_ptr<FileNode> EncFS_Context::lookupNode(const char *path) {
+std::shared_ptr<FileNode> EncFS_Context::lookupNode(const char *path) {
   Lock lock(contextMutex);
 
   FileMap::iterator it = openFiles.find(std::string(path));
   if (it != openFiles.end()) {
     // all the items in the set point to the same node.. so just use the
     // first
-    return (*it->second.begin())->node;
-  } else {
-    return shared_ptr<FileNode>();
+    return it->second.front();
   }
+  return std::shared_ptr<FileNode>();
 }
 
 void EncFS_Context::renameNode(const char *from, const char *to) {
@@ -109,46 +105,32 @@ void EncFS_Context::renameNode(const char *from, const char *to) {
 
   FileMap::iterator it = openFiles.find(std::string(from));
   if (it != openFiles.end()) {
-    std::set<Placeholder *> val = it->second;
+    auto val = it->second;
     openFiles.erase(it);
     openFiles[std::string(to)] = val;
   }
 }
 
-shared_ptr<FileNode> EncFS_Context::getNode(void *pl) {
-  Placeholder *ph = (Placeholder *)pl;
-  return ph->node;
+FileNode *EncFS_Context::putNode(const char *path,
+                                 std::shared_ptr<FileNode> &&node) {
+  Lock lock(contextMutex);
+  auto &list = openFiles[std::string(path)];
+  list.push_front(std::move(node));
+  return list.front().get();
 }
 
-void *EncFS_Context::putNode(const char *path,
-                             const shared_ptr<FileNode> &node) {
+void EncFS_Context::eraseNode(const char *path, FileNode *pl) {
   Lock lock(contextMutex);
-  Placeholder *pl = new Placeholder(node);
-  openFiles[std::string(path)].insert(pl);
-
-  return (void *)pl;
-}
-
-void EncFS_Context::eraseNode(const char *path, void *pl) {
-  Lock lock(contextMutex);
-
-  Placeholder *ph = (Placeholder *)pl;
 
   FileMap::iterator it = openFiles.find(std::string(path));
   rAssert(it != openFiles.end());
 
-  int rmCount = it->second.erase(ph);
-
-  rAssert(rmCount == 1);
+  it->second.pop_front();
 
   // if no more references to this file, remove the record all together
   if (it->second.empty()) {
-    // attempts to make use of shallow copy to clear memory used to hold
-    // unencrypted filenames.. not sure this does any good..
-    std::string storedName = it->first;
     openFiles.erase(it);
-    storedName.assign(storedName.length(), '\0');
   }
-
-  delete ph;
 }
+
+}  // namespace encfs

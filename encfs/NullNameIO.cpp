@@ -20,16 +20,21 @@
 
 #include "NullNameIO.h"
 
-#include "Cipher.h"
-#include "base64.h"
-
 #include <cstring>
+#include <memory>
 
-using namespace rel;
+#include "CipherKey.h"
+#include "Error.h"
+#include "NameIO.h"
 
-static shared_ptr<NameIO> NewNNIO(const Interface &, const shared_ptr<Cipher> &,
-                                  const CipherKey &) {
-  return shared_ptr<NameIO>(new NullNameIO());
+namespace encfs {
+
+class Cipher;
+
+static std::shared_ptr<NameIO> NewNNIO(const Interface &,
+                                       const std::shared_ptr<Cipher> &,
+                                       const CipherKey &) {
+  return std::shared_ptr<NameIO>(new NullNameIO());
 }
 
 static Interface NNIOIface("nameio/null", 1, 0, 0);
@@ -53,19 +58,25 @@ int NullNameIO::maxDecodedNameLen(int encodedNameLen) const {
 }
 
 int NullNameIO::encodeName(const char *plaintextName, int length, uint64_t *iv,
-                           char *encodedName) const {
+                           char *encodedName, int bufferLength) const {
   (void)iv;
+
+  rAssert(length <= bufferLength);
   memcpy(encodedName, plaintextName, length);
 
   return length;
 }
 
 int NullNameIO::decodeName(const char *encodedName, int length, uint64_t *iv,
-                           char *plaintextName) const {
+                           char *plaintextName, int bufferLength) const {
   (void)iv;
+
+  rAssert(length <= bufferLength);
   memcpy(plaintextName, encodedName, length);
 
   return length;
 }
 
 bool NullNameIO::Enabled() { return true; }
+
+}  // namespace encfs

@@ -21,11 +21,14 @@
 #ifndef _encfs_incl_
 #define _encfs_incl_
 
-#include "config.h"
+#include "internal/easylogging++.h"
 #include <fuse.h>
+#include <sys/types.h>
 #include <unistd.h>
 
-#include <rlog/rlog.h>
+#include "config.h"
+
+namespace encfs {
 
 #if defined(HAVE_SYS_XATTR_H) | defined(HAVE_ATTR_XATTR_H)
 #define HAVE_XATTR
@@ -38,8 +41,7 @@ static __inline int setfsuid(uid_t uid) {
   uid_t olduid = geteuid();
 
   if (seteuid(uid) != 0) {
-    // ignore error.
-    rDebug("seteuid error: %i", errno);
+    VLOG(1) << "seteuid error: " << errno;
   }
 
   return olduid;
@@ -49,8 +51,7 @@ static __inline int setfsgid(gid_t gid) {
   gid_t oldgid = getegid();
 
   if (setegid(gid) != 0) {
-    // ignore error.
-    rDebug("setfsgid error: %i", errno);
+    VLOG(1) << "setfsgid error: " << errno;
   }
 
   return oldgid;
@@ -61,7 +62,8 @@ int encfs_getattr(const char *path, struct stat *stbuf);
 int encfs_fgetattr(const char *path, struct stat *stbuf,
                    struct fuse_file_info *fi);
 int encfs_readlink(const char *path, char *buf, size_t size);
-int encfs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler);
+int encfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
+                  off_t offset, struct fuse_file_info *finfo);
 int encfs_mknod(const char *path, mode_t mode, dev_t rdev);
 int encfs_mkdir(const char *path, mode_t mode);
 int encfs_unlink(const char *path);
@@ -75,6 +77,7 @@ int encfs_truncate(const char *path, off_t size);
 int encfs_ftruncate(const char *path, off_t size, struct fuse_file_info *fi);
 int encfs_utime(const char *path, struct utimbuf *buf);
 int encfs_open(const char *path, struct fuse_file_info *info);
+int encfs_create(const char *path, mode_t mode, struct fuse_file_info *info);
 int encfs_release(const char *path, struct fuse_file_info *info);
 int encfs_read(const char *path, char *buf, size_t size, off_t offset,
                struct fuse_file_info *info);
@@ -103,5 +106,7 @@ int encfs_removexattr(const char *path, const char *name);
 #endif
 
 int encfs_utimens(const char *path, const struct timespec ts[2]);
+
+}  // namespace encfs
 
 #endif

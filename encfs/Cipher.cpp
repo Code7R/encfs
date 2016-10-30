@@ -18,25 +18,26 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include <iostream>
+#include <list>
+#include <map>
+#include <stddef.h>
+#include <string>
+#include <utility>
 
 #include "Cipher.h"
+#include "CipherKey.h"
 #include "Interface.h"
-#include "Range.h"
-#include "base64.h"
-
-#include <map>
-#include <list>
-#include <string>
-#include <iostream>
-
 // for static build.  Need to reference the modules which are registered at
 // run-time, to ensure that the linker doesn't optimize them away.
 #include "NullCipher.h"
+#include "Range.h"
 #include "SSL_Cipher.h"
+#include "base64.h"
 
 using namespace std;
-using namespace rel;
+
+namespace encfs {
 
 #define REF_MODULE(TYPE) \
   if (!TYPE::Enabled()) cerr << "referenceModule: should never happen\n";
@@ -110,9 +111,8 @@ bool Cipher::Register(const char *name, const char *description,
   gCipherMap->insert(make_pair(string(name), ca));
   return true;
 }
-
-shared_ptr<Cipher> Cipher::New(const string &name, int keyLen) {
-  shared_ptr<Cipher> result;
+std::shared_ptr<Cipher> Cipher::New(const string &name, int keyLen) {
+  std::shared_ptr<Cipher> result;
 
   if (gCipherMap) {
     CipherMap_t::const_iterator it = gCipherMap->find(name);
@@ -125,9 +125,8 @@ shared_ptr<Cipher> Cipher::New(const string &name, int keyLen) {
 
   return result;
 }
-
-shared_ptr<Cipher> Cipher::New(const Interface &iface, int keyLen) {
-  shared_ptr<Cipher> result;
+std::shared_ptr<Cipher> Cipher::New(const Interface &iface, int keyLen) {
+  std::shared_ptr<Cipher> result;
   if (gCipherMap) {
     CipherMap_t::const_iterator it;
     CipherMap_t::const_iterator mapEnd = gCipherMap->end();
@@ -197,5 +196,11 @@ string Cipher::encodeAsString(const CipherKey &key,
   B64ToAscii(b64Key, b64Len);
   b64Key[b64Len - 1] = '\0';
 
-  return string((const char *)b64Key);
+  string str((const char *)b64Key);
+  delete[] b64Key;
+  delete[] keyBuf;
+
+  return str;
 }
+
+}  // namespace encfs

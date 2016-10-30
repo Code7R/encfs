@@ -21,15 +21,18 @@
 #ifndef _Cipher_incl_
 #define _Cipher_incl_
 
+#include <inttypes.h>
+#include <list>
+#include <memory>
+#include <stdint.h>
+#include <string>
+
+#include "CipherKey.h"
+#include "Interface.h"
+#include "Range.h"
 #include "encfs.h"
 
-#include "Range.h"
-#include "Interface.h"
-#include "CipherKey.h"
-
-#include <string>
-#include <list>
-#include <inttypes.h>
+namespace encfs {
 
 /*
     Mostly pure virtual interface defining operations on a cipher.
@@ -41,13 +44,13 @@ class Cipher {
  public:
   // if no key length was indicated when cipher was registered, then keyLen
   // <= 0 will be used.
-  typedef shared_ptr<Cipher>(*CipherConstructor)(const rel::Interface &iface,
-                                                 int keyLenBits);
+  typedef std::shared_ptr<Cipher> (*CipherConstructor)(const Interface &iface,
+                                                       int keyLenBits);
 
   struct CipherAlgorithm {
     std::string name;
     std::string description;
-    rel::Interface iface;
+    Interface iface;
     Range keyLength;
     Range blockSize;
   };
@@ -55,21 +58,22 @@ class Cipher {
   typedef std::list<CipherAlgorithm> AlgorithmList;
   static AlgorithmList GetAlgorithmList(bool includeHidden = false);
 
-  static shared_ptr<Cipher> New(const rel::Interface &iface, int keyLen = -1);
-  static shared_ptr<Cipher> New(const std::string &cipherName, int keyLen = -1);
+  static std::shared_ptr<Cipher> New(const Interface &iface, int keyLen = -1);
+  static std::shared_ptr<Cipher> New(const std::string &cipherName,
+                                     int keyLen = -1);
 
   static bool Register(const char *cipherName, const char *description,
-                       const rel::Interface &iface,
-                       CipherConstructor constructor, bool hidden = false);
+                       const Interface &iface, CipherConstructor constructor,
+                       bool hidden = false);
   static bool Register(const char *cipherName, const char *description,
-                       const rel::Interface &iface, const Range &keyLength,
+                       const Interface &iface, const Range &keyLength,
                        const Range &blockSize, CipherConstructor constructor,
                        bool hidden = false);
 
   Cipher();
   virtual ~Cipher();
 
-  virtual rel::Interface interface() const = 0;
+  virtual Interface interface() const = 0;
 
   // create a new key based on a password
   // if iterationCount == 0, then iteration count will be determined
@@ -148,5 +152,7 @@ class Cipher {
   virtual bool blockDecode(unsigned char *buf, int size, uint64_t iv64,
                            const CipherKey &key) const = 0;
 };
+
+}  // namespace encfs
 
 #endif

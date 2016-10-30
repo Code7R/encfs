@@ -20,16 +20,20 @@
 
 #include "openssl.h"
 
+#include <openssl/crypto.h>
 #include <pthread.h>
-
-#include <rlog/rlog.h>
+#include <stdlib.h>
 
 #define NO_DES
-#include <openssl/ssl.h>
 #include <openssl/rand.h>
+#include <openssl/ssl.h>
 #ifndef OPENSSL_NO_ENGINE
 #include <openssl/engine.h>
 #endif
+
+#include "Error.h"
+
+namespace encfs {
 
 unsigned long pthreads_thread_id() { return (unsigned long)pthread_self(); }
 
@@ -40,7 +44,7 @@ void pthreads_locking_callback(int mode, int n, const char *caller_file,
   (void)caller_line;
 
   if (!crypto_locks) {
-    rDebug("Allocating %i locks for OpenSSL", CRYPTO_num_locks());
+    VLOG(1) << "Allocating " << CRYPTO_num_locks() << " locks for OpenSSL";
     crypto_locks = new pthread_mutex_t[CRYPTO_num_locks()];
     for (int i = 0; i < CRYPTO_num_locks(); ++i)
       pthread_mutex_init(crypto_locks + i, 0);
@@ -93,3 +97,5 @@ void openssl_shutdown(bool threaded) {
 
   if (threaded) pthreads_locking_cleanup();
 }
+
+}  // namespace encfs

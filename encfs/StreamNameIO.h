@@ -21,20 +21,26 @@
 #ifndef _StreamNameIO_incl_
 #define _StreamNameIO_incl_
 
-#include "NameIO.h"
+#include <memory>
+#include <stdint.h>
+
 #include "CipherKey.h"
+#include "Interface.h"
+#include "NameIO.h"
+
+namespace encfs {
 
 class Cipher;
 
 class StreamNameIO : public NameIO {
  public:
-  static rel::Interface CurrentInterface();
+  static Interface CurrentInterface();
 
-  StreamNameIO(const rel::Interface &iface, const shared_ptr<Cipher> &cipher,
+  StreamNameIO(const Interface &iface, const std::shared_ptr<Cipher> &cipher,
                const CipherKey &key);
   virtual ~StreamNameIO();
 
-  virtual rel::Interface interface() const;
+  virtual Interface interface() const;
 
   virtual int maxEncodedNameLen(int plaintextNameLen) const;
   virtual int maxDecodedNameLen(int encodedNameLen) const;
@@ -44,14 +50,16 @@ class StreamNameIO : public NameIO {
 
  protected:
   virtual int encodeName(const char *plaintextName, int length, uint64_t *iv,
-                         char *encodedName) const;
+                         char *encodedName, int bufferLength) const;
   virtual int decodeName(const char *encodedName, int length, uint64_t *iv,
-                         char *plaintextName) const;
+                         char *plaintextName, int bufferLength) const;
 
  private:
   int _interface;
-  shared_ptr<Cipher> _cipher;
+  std::shared_ptr<Cipher> _cipher;
   CipherKey _key;
 };
+
+}  // namespace encfs
 
 #endif

@@ -1,6 +1,9 @@
 # EncFS - an Encrypted Filesystem
 
-[![Build Status](https://travis-ci.org/vgough/encfs.svg)](https://travis-ci.org/vgough/encfs)
+_Build Status_
+ - Circle: [![Circle CI](https://circleci.com/gh/vgough/encfs.svg?style=svg)](https://circleci.com/gh/vgough/encfs)
+ - Travis: [![Travis CI](https://travis-ci.org/vgough/encfs.svg?branch=master)](https://travis-ci.org/vgough/encfs)
+ - Analysis: [![Coverity](https://scan.coverity.com/projects/10117/badge.svg)](https://scan.coverity.com/projects/vgough-encfs)
 
 ## About
 
@@ -9,7 +12,7 @@ using the FUSE library for the filesystem interface. EncFS is open source
 software, licensed under the LGPL.
 
 EncFS is now over 10 years old (first release in 2003).  It was written because
-older NFS-based encrypted filesystems such as CFS had not kept pace with Linux
+older NFS and kernel-based encrypted filesystems such as CFS had not kept pace with Linux
 development.  When FUSE became available, I wrote a CFS replacement for my own
 use and released the first version to Open Source in 2003.
 
@@ -61,6 +64,8 @@ HDD, SSD and ramdisk.
 EncFS works on network file systems (NFS, CIFS...), while ecryptfs
 is known to still have [problems][1].
 
+[1]: https://bugs.launchpad.net/ecryptfs/+bug/277578
+
 ## Development
 
 The master branch contains the latest stable codebase.  This is where bug fixes
@@ -71,5 +76,7 @@ work, some of which may be back-ported to the master branch when it is stable. T
 dev branch is not stable, and there is no guarantee of backward compatibility
 between changes.
 
+## Donations
 
-[1]: https://bugs.launchpad.net/ecryptfs/+bug/277578
+How about a nice email instead?
+

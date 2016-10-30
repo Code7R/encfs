@@ -24,58 +24,48 @@
 #endif
 #define _BSD_SOURCE  // pick up setenv on RH7.3
 
-#include <rlog/rlog.h>
-#include <rlog/Error.h>
-
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/socket.h>
-#include <sys/wait.h>
-#include <fcntl.h>
-#include <unistd.h>
+#include "internal/easylogging++.h"
 #include <cctype>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
-#include <cerrno>
 #include <cstring>
-
-#include <iostream>
+#include <fcntl.h>
 #include <fstream>
-#include <sstream>
+#include <iostream>
+#include <list>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <tinyxml2.h>
+#include <unistd.h>
+#include <vector>
 
-#include <boost/version.hpp>
-#include <boost/archive/xml_iarchive.hpp>
-#include <boost/archive/xml_oarchive.hpp>
-#include <boost/serialization/split_free.hpp>
-#include <boost/serialization/binary_object.hpp>
-
-#include "encfs.h"
-#include "config.h"
-
-#include "autosprintf.h"
-#include "readpassphrase.h"
 #include "BlockNameIO.h"
 #include "Cipher.h"
+#include "CipherKey.h"
 #include "ConfigReader.h"
+#include "ConfigVar.h"
 #include "Context.h"
 #include "DirNode.h"
+#include "Error.h"
 #include "FSConfig.h"
 #include "FileUtils.h"
-#include "NullNameIO.h"
-#include "StreamNameIO.h"
-
+#include "Interface.h"
+#include "NameIO.h"
+#include "Range.h"
+#include "XmlReader.h"
+#include "autosprintf.h"
+#include "base64.h"
+#include "config.h"
 #include "i18n.h"
+#include "intl/gettext.h"
+#include "readpassphrase.h"
 
-
-// disable rlog section grouping for this file.. seems to cause problems
-#undef RLOG_SECTION
-#define RLOG_SECTION
-
-using namespace rel;
-using namespace rlog;
 using namespace std;
 using gnu::autosprintf;
-namespace serial = boost::serialization;
+
+namespace encfs {
 
 static const int DefaultBlockSize = 1024;
 // The maximum length of text passwords.  If longer are needed,
@@ -110,139 +100,23 @@ struct ConfigInfo {
   const char *fileName;
   ConfigType type;
   const char *environmentOverride;
-  bool (*loadFunc)(const char *fileName, const shared_ptr<EncFSConfig> &config,
-                   ConfigInfo *cfg);
-  bool (*saveFunc)(const char *fileName, const shared_ptr<EncFSConfig> &config);
+  bool (*loadFunc)(const char *fileName, EncFSConfig *config, ConfigInfo *cfg);
+  bool (*saveFunc)(const char *fileName, const EncFSConfig *config);
   int currentSubVersion;
   int defaultSubVersion;
 } ConfigFileMapping[] = {
-      // current format
-      {".encfs6.xml", Config_V6, "ENCFS6_CONFIG", readV6Config, writeV6Config,
-       V6SubVersion, 0},
-      // backward compatible support for older versions
-      {".encfs5", Config_V5, "ENCFS5_CONFIG", readV5Config, writeV5Config,
-       V5SubVersion, V5SubVersionDefault},
-      {".encfs4", Config_V4, NULL, readV4Config, writeV4Config, 0, 0},
-      // no longer support earlier versions
-      {".encfs3", Config_V3, NULL, NULL, NULL, 0, 0},
-      {".encfs2", Config_Prehistoric, NULL, NULL, NULL, 0, 0},
-      {".encfs", Config_Prehistoric, NULL, NULL, NULL, 0, 0},
-      {NULL, Config_None, NULL, NULL, NULL, 0, 0}};
-
-#include "boost-versioning.h"
-
-// define serialization helpers
-namespace boost {
-namespace serialization {
-template <class Archive>
-void save(Archive &ar, const EncFSConfig &cfg, unsigned int version) {
-  (void)version;
-  // version 20 (aka 20100613)
-  if (cfg.subVersion == 0)
-    ar << make_nvp("version", V6SubVersion);
-  else
-    ar << make_nvp("version", cfg.subVersion);
-
-  ar << make_nvp("creator", cfg.creator);
-  ar << make_nvp("cipherAlg", cfg.cipherIface);
-  ar << make_nvp("nameAlg", cfg.nameIface);
-  ar << make_nvp("keySize", cfg.keySize);
-  ar << make_nvp("blockSize", cfg.blockSize);
-  ar << make_nvp("uniqueIV", cfg.uniqueIV);
-  ar << make_nvp("chainedNameIV", cfg.chainedNameIV);
-  ar << make_nvp("externalIVChaining", cfg.externalIVChaining);
-  ar << make_nvp("blockMACBytes", cfg.blockMACBytes);
-  ar << make_nvp("blockMACRandBytes", cfg.blockMACRandBytes);
-  ar << make_nvp("allowHoles", cfg.allowHoles);
-
-  int encodedSize = cfg.keyData.size();
-  ar << make_nvp("encodedKeySize", encodedSize);
-  ar << make_nvp("encodedKeyData",
-                 serial::make_binary_object(cfg.getKeyData(), encodedSize));
-
-  // version 20080816
-  int size = cfg.salt.size();
-  ar << make_nvp("saltLen", size);
-  ar << make_nvp("saltData",
-                 serial::make_binary_object(cfg.getSaltData(), size));
-  ar << make_nvp("kdfIterations", cfg.kdfIterations);
-  ar << make_nvp("desiredKDFDuration", cfg.desiredKDFDuration);
-}
-
-template <class Archive>
-void load(Archive &ar, EncFSConfig &cfg, unsigned int version) {
-  rInfo("version = %i", version);
-  // TODO: figure out how to deprecate all but the first case..
-  if (version == 20 || version >= 20100713) {
-    rInfo("found new serialization format");
-    ar >> make_nvp("version", cfg.subVersion);
-  } else if (version == 26800) {
-    rInfo("found 20080816 version");
-    cfg.subVersion = 20080816;
-  } else if (version == 26797) {
-    rInfo("found 20080813");
-    cfg.subVersion = 20080813;
-  } else if (version < (unsigned int)V5SubVersion) {
-    rError("Invalid version %i - please fix config file", version);
-  } else {
-    rInfo("Boost <= 1.41 compatibility mode");
-    cfg.subVersion = version;
-  }
-  rInfo("subVersion = %i", cfg.subVersion);
-
-  ar >> make_nvp("creator", cfg.creator);
-  ar >> make_nvp("cipherAlg", cfg.cipherIface);
-  ar >> make_nvp("nameAlg", cfg.nameIface);
-  ar >> make_nvp("keySize", cfg.keySize);
-  ar >> make_nvp("blockSize", cfg.blockSize);
-  ar >> make_nvp("uniqueIV", cfg.uniqueIV);
-  ar >> make_nvp("chainedNameIV", cfg.chainedNameIV);
-  ar >> make_nvp("externalIVChaining", cfg.externalIVChaining);
-  ar >> make_nvp("blockMACBytes", cfg.blockMACBytes);
-  ar >> make_nvp("blockMACRandBytes", cfg.blockMACRandBytes);
-  ar >> make_nvp("allowHoles", cfg.allowHoles);
-
-  int encodedSize;
-  ar >> make_nvp("encodedKeySize", encodedSize);
-  rAssert(encodedSize == cfg.getCipher()->encodedKeySize());
-
-  unsigned char *key = new unsigned char[encodedSize];
-  ar >>
-      make_nvp("encodedKeyData", serial::make_binary_object(key, encodedSize));
-  cfg.assignKeyData(key, encodedSize);
-  delete[] key;
-
-  if (cfg.subVersion >= 20080816) {
-    int saltLen;
-    ar >> make_nvp("saltLen", saltLen);
-    unsigned char *salt = new unsigned char[saltLen];
-    ar >> make_nvp("saltData", serial::make_binary_object(salt, saltLen));
-    cfg.assignSaltData(salt, saltLen);
-    delete[] salt;
-
-    ar >> make_nvp("kdfIterations", cfg.kdfIterations);
-    ar >> make_nvp("desiredKDFDuration", cfg.desiredKDFDuration);
-  } else {
-    cfg.salt.clear();
-    cfg.kdfIterations = 16;
-    cfg.desiredKDFDuration = NormalKDFDuration;
-  }
-}
-
-template <class Archive>
-void serialize(Archive &ar, EncFSConfig &cfg, unsigned int version) {
-  split_free(ar, cfg, version);
-}
-
-template <class Archive>
-void serialize(Archive &ar, Interface &i, const unsigned int version) {
-  (void)version;
-  ar &make_nvp("name", i.name());
-  ar &make_nvp("major", i.current());
-  ar &make_nvp("minor", i.revision());
-}
-}
-}
+    // current format
+    {".encfs6.xml", Config_V6, "ENCFS6_CONFIG", readV6Config, writeV6Config,
+     V6SubVersion, 0},
+    // backward compatible support for older versions
+    {".encfs5", Config_V5, "ENCFS5_CONFIG", readV5Config, writeV5Config,
+     V5SubVersion, V5SubVersionDefault},
+    {".encfs4", Config_V4, NULL, readV4Config, writeV4Config, 0, 0},
+    // no longer support earlier versions
+    {".encfs3", Config_V3, NULL, NULL, NULL, 0, 0},
+    {".encfs2", Config_Prehistoric, NULL, NULL, NULL, 0, 0},
+    {".encfs", Config_Prehistoric, NULL, NULL, NULL, 0, 0},
+    {NULL, Config_None, NULL, NULL, NULL, 0, 0}};
 
 EncFS_Root::EncFS_Root() {}
 
@@ -296,8 +170,9 @@ bool userAllowMkdir(int promptno, const char *path, mode_t mode) {
   // their own language but then have to respond 'y' or 'n'.
   // xgroup(setup)
   cerr << autosprintf(
-              _("The directory \"%s\" does not exist. Should it be created? "
-                "(y,n) "), path);
+      _("The directory \"%s\" does not exist. Should it be created? "
+        "(y,n) "),
+      path);
   char answer[10];
   char *res;
 
@@ -331,19 +206,19 @@ bool userAllowMkdir(int promptno, const char *path, mode_t mode) {
  * Load config file by calling the load function on the filename
  */
 ConfigType readConfig_load(ConfigInfo *nm, const char *path,
-                           const shared_ptr<EncFSConfig> &config) {
+                           EncFSConfig *config) {
   if (nm->loadFunc) {
     try {
       if ((*nm->loadFunc)(path, config, nm)) {
         config->cfgType = nm->type;
         return nm->type;
       }
-    }
-    catch (rlog::Error &err) {
-      err.log(_RLWarningChannel);
+    } catch (encfs::Error &err) {
+      RLOG(ERROR) << "readConfig error: " << err.what();
     }
 
-    rError(_("Found config file %s, but failed to load - exiting"), path);
+    RLOG(ERROR) << "Found config file " << path
+                << ", but failed to load - exiting";
     exit(1);
   } else {
     // No load function - must be an unsupported type..
@@ -356,16 +231,17 @@ ConfigType readConfig_load(ConfigInfo *nm, const char *path,
  * Try to locate the config file
  * Tries the most recent format first, then looks for older versions
  */
-ConfigType readConfig(const string &rootDir,
-                      const shared_ptr<EncFSConfig> &config) {
+ConfigType readConfig(const string &rootDir, EncFSConfig *config) {
   ConfigInfo *nm = ConfigFileMapping;
   while (nm->fileName) {
     // allow environment variable to override default config path
     if (nm->environmentOverride != NULL) {
       char *envFile = getenv(nm->environmentOverride);
       if (envFile != NULL) {
-        if (! fileExists(envFile)) {
-          rError("fatal: config file specified by environment does not exist: %s", envFile);
+        if (!fileExists(envFile)) {
+          RLOG(ERROR)
+              << "fatal: config file specified by environment does not exist: "
+              << envFile;
           exit(1);
         }
         return readConfig_load(nm, envFile, config);
@@ -386,33 +262,95 @@ ConfigType readConfig(const string &rootDir,
  * Read config file in current "V6" XML format, normally named ".encfs6.xml"
  * This format is in use since Apr 13, 2008 (commit 6d081f5c)
  */
-bool readV6Config(const char *configFile, const shared_ptr<EncFSConfig> &config,
-                  ConfigInfo *info) {
+// Read a boost::serialization config file using an Xml reader..
+bool readV6Config(const char *configFile, EncFSConfig *cfg, ConfigInfo *info) {
   (void)info;
 
-  ifstream st(configFile);
-  if (st.is_open()) {
-    try {
-      boost::archive::xml_iarchive ia(st);
-      ia >> BOOST_SERIALIZATION_NVP(*config);
-
-      return true;
-    }
-    catch (boost::archive::archive_exception &e) {
-      rError("Archive exception: %s", e.what());
-      return false;
-    }
-  } else {
-    rInfo("Failed to load config file %s", configFile);
+  XmlReader rdr;
+  if (!rdr.load(configFile)) {
+    RLOG(ERROR) << "Failed to load config file " << configFile;
     return false;
   }
+
+  XmlValuePtr serialization = rdr["boost_serialization"];
+  XmlValuePtr config = (*serialization)["cfg"];
+  if (!config) {
+    config = (*serialization)["config"];
+  }
+  if (!config) {
+    RLOG(ERROR) << "Unable to find XML configuration in file " << configFile;
+    return false;
+  }
+
+  int version;
+  if (!config->read("version", &version) &&
+      !config->read("@version", &version)) {
+    RLOG(ERROR) << "Unable to find version in config file";
+    return false;
+  }
+
+  // version numbering was complicated by boost::archive
+  if (version == 20 || version >= 20100713) {
+    VLOG(1) << "found new serialization format";
+    cfg->subVersion = version;
+  } else if (version == 26800) {
+    VLOG(1) << "found 20080816 version";
+    cfg->subVersion = 20080816;
+  } else if (version == 26797) {
+    VLOG(1) << "found 20080813";
+    cfg->subVersion = 20080813;
+  } else if (version < V5SubVersion) {
+    RLOG(ERROR) << "Invalid version " << version << " - please fix config file";
+  } else {
+    VLOG(1) << "Boost <= 1.41 compatibility mode";
+    cfg->subVersion = version;
+  }
+  VLOG(1) << "subVersion = " << cfg->subVersion;
+
+  config->read("creator", &cfg->creator);
+  config->read("cipherAlg", &cfg->cipherIface);
+  config->read("nameAlg", &cfg->nameIface);
+
+  config->read("keySize", &cfg->keySize);
+
+  config->read("blockSize", &cfg->blockSize);
+  config->read("uniqueIV", &cfg->uniqueIV);
+  config->read("chainedNameIV", &cfg->chainedNameIV);
+  config->read("externalIVChaining", &cfg->externalIVChaining);
+  config->read("blockMACBytes", &cfg->blockMACBytes);
+  config->read("blockMACRandBytes", &cfg->blockMACRandBytes);
+  config->read("allowHoles", &cfg->allowHoles);
+
+  int encodedSize;
+  config->read("encodedKeySize", &encodedSize);
+  unsigned char *key = new unsigned char[encodedSize];
+  config->readB64("encodedKeyData", key, encodedSize);
+  cfg->assignKeyData(key, encodedSize);
+  delete[] key;
+
+  if (cfg->subVersion >= 20080816) {
+    int saltLen;
+    config->read("saltLen", &saltLen);
+    unsigned char *salt = new unsigned char[saltLen];
+    config->readB64("saltData", salt, saltLen);
+    cfg->assignSaltData(salt, saltLen);
+    delete[] salt;
+
+    config->read("kdfIterations", &cfg->kdfIterations);
+    config->read("desiredKDFDuration", &cfg->desiredKDFDuration);
+  } else {
+    cfg->kdfIterations = 16;
+    cfg->desiredKDFDuration = NormalKDFDuration;
+  }
+
+  return true;
 }
 
 /**
  * Read config file in deprecated "V5" format, normally named ".encfs5"
  * This format has been used before Apr 13, 2008
  */
-bool readV5Config(const char *configFile, const shared_ptr<EncFSConfig> &config,
+bool readV5Config(const char *configFile, EncFSConfig *config,
                   ConfigInfo *info) {
   bool ok = false;
 
@@ -425,15 +363,14 @@ bool readV5Config(const char *configFile, const shared_ptr<EncFSConfig> &config,
       if (config->subVersion > info->currentSubVersion) {
         /* config file specifies a version outside our supported
          range..   */
-        rWarning(_("Config subversion %i found, but this version of"
-                   " encfs only supports up to version %i."),
-                 config->subVersion, info->currentSubVersion);
+        RLOG(WARNING) << "Config subversion " << config->subVersion
+                      << " found, which is newer than supported version "
+                      << info->currentSubVersion;
         return false;
       }
       if (config->subVersion < 20040813) {
-        rError(
-            _("This version of EncFS doesn't support "
-              "filesystems created before 2004-08-13"));
+        RLOG(ERROR) << "This version of EncFS doesn't support "
+                       "filesystems created before 2004-08-13";
         return false;
       }
 
@@ -453,10 +390,9 @@ bool readV5Config(const char *configFile, const shared_ptr<EncFSConfig> &config,
       config->blockMACRandBytes = cfgRdr["blockMACRandBytes"].readInt(0);
 
       ok = true;
-    }
-    catch (rlog::Error &err) {
-      err.log(_RLWarningChannel);
-      rDebug("Error parsing data in config file %s", configFile);
+    } catch (encfs::Error &err) {
+      RLOG(WARNING) << err.what();
+      VLOG(1) << "Error parsing data in config file " << configFile;
       ok = false;
     }
   }
@@ -468,7 +404,7 @@ bool readV5Config(const char *configFile, const shared_ptr<EncFSConfig> &config,
  * Read config file in deprecated "V4" format, normally named ".encfs4"
  * This format has been used before Jan 7, 2008
  */
-bool readV4Config(const char *configFile, const shared_ptr<EncFSConfig> &config,
+bool readV4Config(const char *configFile, EncFSConfig *config,
                   ConfigInfo *info) {
   bool ok = false;
 
@@ -494,10 +430,9 @@ bool readV4Config(const char *configFile, const shared_ptr<EncFSConfig> &config,
       config->chainedNameIV = false;
 
       ok = true;
-    }
-    catch (rlog::Error &err) {
-      err.log(_RLWarningChannel);
-      rDebug("Error parsing config file %s", configFile);
+    } catch (encfs::Error &err) {
+      RLOG(WARNING) << err.what();
+      VLOG(1) << "Error parsing config file " << configFile;
       ok = false;
     }
   }
@@ -506,7 +441,7 @@ bool readV4Config(const char *configFile, const shared_ptr<EncFSConfig> &config,
 }
 
 bool saveConfig(ConfigType type, const string &rootDir,
-                const shared_ptr<EncFSConfig> &config) {
+                const EncFSConfig *config) {
   bool ok = false;
 
   ConfigInfo *nm = ConfigFileMapping;
@@ -521,9 +456,8 @@ bool saveConfig(ConfigType type, const string &rootDir,
 
       try {
         ok = (*nm->saveFunc)(path.c_str(), config);
-      }
-      catch (rlog::Error &err) {
-        err.log(_RLWarningChannel);
+      } catch (encfs::Error &err) {
+        RLOG(WARNING) << err.what();
         ok = false;
       }
       break;
@@ -534,31 +468,92 @@ bool saveConfig(ConfigType type, const string &rootDir,
   return ok;
 }
 
-bool writeV6Config(const char *configFile,
-                   const shared_ptr<EncFSConfig> &config) {
-  ofstream st(configFile);
-  if (!st.is_open()) return false;
-
-  st << *config;
-  return true;
+template <typename T>
+tinyxml2::XMLElement *addEl(tinyxml2::XMLDocument &doc,
+                            tinyxml2::XMLNode *parent, const char *name,
+                            T value) {
+  auto el = doc.NewElement(name);
+  el->SetText(value);
+  parent->InsertEndChild(el);
+  return el;
 }
 
-std::ostream &operator<<(std::ostream &st, const EncFSConfig &cfg) {
-  boost::archive::xml_oarchive oa(st);
-  oa << BOOST_SERIALIZATION_NVP(cfg);
+template <>
+tinyxml2::XMLElement *addEl<>(tinyxml2::XMLDocument &doc,
+                              tinyxml2::XMLNode *parent, const char *name,
+                              Interface iface) {
+  auto el = doc.NewElement(name);
 
-  return st;
+  auto n = doc.NewElement("name");
+  n->SetText(iface.name().c_str());
+  el->InsertEndChild(n);
+
+  auto major = doc.NewElement("major");
+  major->SetText(iface.current());
+  el->InsertEndChild(major);
+
+  auto minor = doc.NewElement("minor");
+  minor->SetText(iface.revision());
+  el->InsertEndChild(minor);
+
+  parent->InsertEndChild(el);
+  return el;
 }
 
-std::istream &operator>>(std::istream &st, EncFSConfig &cfg) {
-  boost::archive::xml_iarchive ia(st);
-  ia >> BOOST_SERIALIZATION_NVP(cfg);
-
-  return st;
+template <>
+tinyxml2::XMLElement *addEl<>(tinyxml2::XMLDocument &doc,
+                              tinyxml2::XMLNode *parent, const char *name,
+                              std::vector<unsigned char> data) {
+  string v = string("\n") + B64StandardEncode(data) + "\n";
+  return addEl(doc, parent, name, v.c_str());
 }
 
-bool writeV5Config(const char *configFile,
-                   const shared_ptr<EncFSConfig> &config) {
+bool writeV6Config(const char *configFile, const EncFSConfig *cfg) {
+  tinyxml2::XMLDocument doc;
+
+  // Various static tags are included to make the output compatible with
+  // older boost-based readers.
+  doc.InsertEndChild(doc.NewDeclaration(nullptr));
+  doc.InsertEndChild(doc.NewUnknown("DOCTYPE boost_serialization"));
+
+  auto header = doc.NewElement("boost_serialization");
+  header->SetAttribute("signature", "serialization::archive");
+  header->SetAttribute("version", "7");
+  doc.InsertEndChild(header);
+
+  auto config = doc.NewElement("cfg");
+  config->SetAttribute("class_id", "0");
+  config->SetAttribute("tracking_level", "0");
+  config->SetAttribute("version", "20");
+  header->InsertEndChild(config);
+
+  addEl(doc, config, "version", V6SubVersion);
+  addEl(doc, config, "creator", cfg->creator.c_str());
+  auto cipherAlg = addEl(doc, config, "cipherAlg", cfg->cipherIface);
+  cipherAlg->SetAttribute("class_id", "1");
+  cipherAlg->SetAttribute("tracking_level", "0");
+  cipherAlg->SetAttribute("version", "0");
+  addEl(doc, config, "nameAlg", cfg->nameIface);
+  addEl(doc, config, "keySize", cfg->keySize);
+  addEl(doc, config, "blockSize", cfg->blockSize);
+  addEl(doc, config, "uniqueIV", cfg->uniqueIV);
+  addEl(doc, config, "chainedNameIV", cfg->chainedNameIV);
+  addEl(doc, config, "externalIVChaining", cfg->externalIVChaining);
+  addEl(doc, config, "blockMACBytes", cfg->blockMACBytes);
+  addEl(doc, config, "blockMACRandBytes", cfg->blockMACRandBytes);
+  addEl(doc, config, "allowHoles", cfg->allowHoles);
+  addEl(doc, config, "encodedKeySize", (int)cfg->keyData.size());
+  addEl(doc, config, "encodedKeyData", cfg->keyData);
+  addEl(doc, config, "saltLen", (int)cfg->salt.size());
+  addEl(doc, config, "saltData", cfg->salt);
+  addEl(doc, config, "kdfIterations", cfg->kdfIterations);
+  addEl(doc, config, "desiredKDFDuration", (int)cfg->desiredKDFDuration);
+
+  auto err = doc.SaveFile(configFile, false);
+  return err == tinyxml2::XML_SUCCESS;
+}
+
+bool writeV5Config(const char *configFile, const EncFSConfig *config) {
   ConfigReader cfg;
 
   cfg["creator"] << config->creator;
@@ -579,8 +574,7 @@ bool writeV5Config(const char *configFile,
   return cfg.save(configFile);
 }
 
-bool writeV4Config(const char *configFile,
-                   const shared_ptr<EncFSConfig> &config) {
+bool writeV4Config(const char *configFile, const EncFSConfig *config) {
   ConfigReader cfg;
 
   cfg["cipher"] << config->cipherIface;
@@ -631,20 +625,23 @@ static Cipher::CipherAlgorithm selectCipherAlgorithm() {
                     // shown after algorithm name and description.
                     // xgroup(setup)
                     _(" -- Supports key lengths of %i to %i bits"),
-                    it->keyLength.min(), it->keyLength.max()) << "\n";
+                    it->keyLength.min(), it->keyLength.max())
+             << "\n";
       }
 
       if (it->blockSize.min() == it->blockSize.max()) {
         cout << autosprintf(
                     // shown after algorithm name and description.
                     // xgroup(setup)
-                    _(" -- block size %i bytes"), it->blockSize.min()) << "\n";
+                    _(" -- block size %i bytes"), it->blockSize.min())
+             << "\n";
       } else {
         cout << autosprintf(
                     // shown after algorithm name and description.
                     // xgroup(setup)
                     _(" -- Supports block sizes of %i to %i bytes"),
-                    it->blockSize.min(), it->blockSize.max()) << "\n";
+                    it->blockSize.min(), it->blockSize.max())
+             << "\n";
       }
     }
 
@@ -667,7 +664,8 @@ static Cipher::CipherAlgorithm selectCipherAlgorithm() {
     Cipher::CipherAlgorithm alg = *it;
 
     // xgroup(setup)
-    cout << autosprintf(_("Selected algorithm \"%s\""), alg.name.c_str()) << "\n\n";
+    cout << autosprintf(_("Selected algorithm \"%s\""), alg.name.c_str())
+         << "\n\n";
 
     return alg;
   }
@@ -707,7 +705,8 @@ static Interface selectNameCoding() {
       ++it;
 
     // xgroup(setup)
-    cout << autosprintf(_("Selected algorithm \"%s\""), it->name.c_str()) << "\"\n\n";
+    cout << autosprintf(_("Selected algorithm \"%s\""), it->name.c_str())
+         << "\"\n\n";
 
     return it->iface;
   }
@@ -774,17 +773,18 @@ static int selectBlockSize(const Cipher::CipherAlgorithm &alg) {
     cout << autosprintf(
                 // xgroup(setup)
                 _("Using filesystem block size of %i bytes"),
-                alg.blockSize.min()) << "\n";
+                alg.blockSize.min())
+         << "\n";
     return alg.blockSize.min();
   }
 
   cout << autosprintf(
-              // xgroup(setup)
-              _("Select a block size in bytes.  The cipher you have chosen\n"
-                "supports sizes from %i to %i bytes in increments of %i.\n"
-                "Or just hit enter for the default (%i bytes)\n"),
-              alg.blockSize.min(), alg.blockSize.max(), alg.blockSize.inc(),
-              DefaultBlockSize);
+      // xgroup(setup)
+      _("Select a block size in bytes.  The cipher you have chosen\n"
+        "supports sizes from %i to %i bytes in increments of %i.\n"
+        "Or just hit enter for the default (%i bytes)\n"),
+      alg.blockSize.min(), alg.blockSize.max(), alg.blockSize.inc(),
+      DefaultBlockSize);
 
   // xgroup(setup)
   cout << "\n" << _("filesystem block size: ");
@@ -824,7 +824,7 @@ static bool boolDefault(const char *prompt, bool defaultValue) {
   string response;
   bool value;
 
-  while(true) {
+  while (true) {
     cout << yesno;
     getline(cin, response);
 
@@ -866,8 +866,10 @@ static void selectBlockMAC(int *macBytes, int *macRandBytes, bool forceMac) {
           "performance but it also means [almost] any modifications or errors\n"
           "within a block will be caught and will cause a read error."));
   } else {
-    cout << _("\n\nYou specified --require-macs.  "
-              "Enabling block authentication code headers...\n\n");
+    cout << "\n\n"
+         << _("You specified --require-macs.  "
+              "Enabling block authentication code headers...")
+         << "\n\n";
     addMAC = true;
   }
 
@@ -877,13 +879,14 @@ static void selectBlockMAC(int *macBytes, int *macRandBytes, bool forceMac) {
     *macBytes = 0;
 
   // xgroup(setup)
-  cout << _("Add random bytes to each block header?\n"
-            "This adds a performance penalty, but ensures that blocks\n"
-            "have different authentication codes.  Note that you can\n"
-            "have the same benefits by enabling per-file initialization\n"
-            "vectors, which does not come with as great of performance\n"
-            "penalty. \n"
-            "Select a number of bytes, from 0 (no random bytes) to 8: ");
+  cout << _(
+      "Add random bytes to each block header?\n"
+      "This adds a performance penalty, but ensures that blocks\n"
+      "have different authentication codes.  Note that you can\n"
+      "have the same benefits by enabling per-file initialization\n"
+      "vectors, which does not come with as great of performance\n"
+      "penalty. \n"
+      "Select a number of bytes, from 0 (no random bytes) to 8: ");
 
   char answer[10];
   int randSize = 0;
@@ -906,7 +909,8 @@ static bool selectUniqueIV(bool default_answer) {
       _("Enable per-file initialization vectors?\n"
         "This adds about 8 bytes per file to the storage requirements.\n"
         "It should not affect performance except possibly with applications\n"
-        "which rely on block-aligned file io for performance."), default_answer);
+        "which rely on block-aligned file io for performance."),
+      default_answer);
 }
 
 /**
@@ -944,7 +948,8 @@ static bool selectZeroBlockPassThrough() {
         "This avoids writing encrypted blocks when file holes are created."));
 }
 
-RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
+RootPtr createV6Config(EncFS_Context *ctx,
+                       const std::shared_ptr<EncFS_Opts> &opts) {
   const std::string rootDir = opts->rootDir;
   bool enableIdleTracking = opts->idleTracking;
   bool forceDecode = opts->forceDecode;
@@ -964,11 +969,12 @@ RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
   char answer[10] = {0};
   if (configMode == Config_Prompt) {
     // xgroup(setup)
-    cout << _("Please choose from one of the following options:\n"
-              " enter \"x\" for expert configuration mode,\n"
-              " enter \"p\" for pre-configured paranoia mode,\n"
-              " anything else, or an empty line will select standard mode.\n"
-              "?> ");
+    cout << _(
+        "Please choose from one of the following options:\n"
+        " enter \"x\" for expert configuration mode,\n"
+        " enter \"p\" for pre-configured paranoia mode,\n"
+        " anything else, or an empty line will select standard mode.\n"
+        "?> ");
 
     if (annotate) cerr << "$PROMPT$ config_option" << endl;
 
@@ -977,17 +983,17 @@ RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
     cout << "\n";
   }
 
-  //                          documented in ...
-  int keySize = 0; //                       selectKeySize()
-  int blockSize = 0; //                     selectBlockSize()
-  Cipher::CipherAlgorithm alg; //           selectCipherAlgorithm()
-  Interface nameIOIface; //                 selectNameCoding()
-  int blockMACBytes = 0;   //               selectBlockMAC()
-  int blockMACRandBytes = 0; //             selectBlockMAC()
-  bool uniqueIV = true;    //               selectUniqueIV()
-  bool chainedIV = true;   //               selectChainedIV()
-  bool externalIV = false; //               selectExternalChainedIV()
-  bool allowHoles = true;  //               selectZeroBlockPassThrough()
+  //                               documented in ...
+  int keySize = 0;              // selectKeySize()
+  int blockSize = 0;            // selectBlockSize()
+  Cipher::CipherAlgorithm alg;  // selectCipherAlgorithm()
+  Interface nameIOIface;        // selectNameCoding()
+  int blockMACBytes = 0;        // selectBlockMAC()
+  int blockMACRandBytes = 0;    // selectBlockMAC()
+  bool uniqueIV = true;         // selectUniqueIV()
+  bool chainedIV = true;        // selectChainedIV()
+  bool externalIV = false;      // selectExternalChainedIV()
+  bool allowHoles = true;       // selectZeroBlockPassThrough()
   long desiredKDFDuration = NormalKDFDuration;
 
   if (reverseEncryption) {
@@ -1000,7 +1006,7 @@ RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
 
   if (configMode == Config_Paranoia || answer[0] == 'p') {
     if (reverseEncryption) {
-      rError(_("Paranoia configuration not supported for reverse encryption"));
+      cerr << _("Paranoia configuration not supported for reverse encryption");
       return rootInfo;
     }
 
@@ -1014,7 +1020,14 @@ RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
     keySize = 256;
     blockSize = DefaultBlockSize;
     alg = findCipherAlgorithm("AES", keySize);
+
+// If case-insensitive system, opt for Block32 filename encoding
+#if defined(__APPLE__) || defined(WIN32)
+    nameIOIface = BlockNameIO::CurrentInterface(true);
+#else
     nameIOIface = BlockNameIO::CurrentInterface();
+#endif
+
     blockMACBytes = 8;
     blockMACRandBytes = 0;  // using uniqueIV, so this isn't necessary
     externalIV = true;
@@ -1027,7 +1040,13 @@ RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
     keySize = 192;
     blockSize = DefaultBlockSize;
     alg = findCipherAlgorithm("AES", keySize);
+
+// If case-insensitive system, opt for Block32 filename encoding
+#if defined(__APPLE__) || defined(WIN32)
+    nameIOIface = BlockNameIO::CurrentInterface(true);
+#else
     nameIOIface = BlockNameIO::CurrentInterface();
+#endif
 
     if (opts->requireMac) {
       blockMACBytes = 8;
@@ -1037,9 +1056,10 @@ RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
   if (answer[0] == 'x' || alg.name.empty()) {
     if (answer[0] != 'x') {
       // xgroup(setup)
-      cout << _("Sorry, unable to locate cipher for predefined "
-                "configuration...\n"
-                "Falling through to Manual configuration mode.");
+      cout << _(
+          "Sorry, unable to locate cipher for predefined "
+          "configuration...\n"
+          "Falling through to Manual configuration mode.");
     } else {
       // xgroup(setup)
       cout << _("Manual configuration mode selected.");
@@ -1057,8 +1077,7 @@ RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
       /* Reverse mounts are read-only by default (set in main.cpp).
        * If uniqueIV is off, writing can be allowed, because there
        * is no header that could be overwritten */
-      if (uniqueIV == false)
-        opts->readOnly = false;
+      if (uniqueIV == false) opts->readOnly = false;
     } else {
       chainedIV = selectChainedIV();
       uniqueIV = selectUniqueIV(true);
@@ -1076,17 +1095,18 @@ RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
     }
   }
 
-  shared_ptr<Cipher> cipher = Cipher::New(alg.name, keySize);
+  std::shared_ptr<Cipher> cipher = Cipher::New(alg.name, keySize);
   if (!cipher) {
-    rError(_("Unable to instanciate cipher %s, key size %i, block size %i"),
-           alg.name.c_str(), keySize, blockSize);
+    cerr << autosprintf(
+        _("Unable to instanciate cipher %s, key size %i, block size %i"),
+        alg.name.c_str(), keySize, blockSize);
     return rootInfo;
   } else {
-    rDebug("Using cipher %s, key size %i, block size %i", alg.name.c_str(),
-           keySize, blockSize);
+    VLOG(1) << "Using cipher " << alg.name << ", key size " << keySize
+            << ", block size " << blockSize;
   }
 
-  shared_ptr<EncFSConfig> config(new EncFSConfig);
+  std::shared_ptr<EncFSConfig> config(new EncFSConfig);
 
   config->cfgType = Config_V6;
   config->cipherIface = cipher->interface();
@@ -1109,8 +1129,9 @@ RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
   cout << "\n";
   // xgroup(setup)
   cout << _("Configuration finished.  The filesystem to be created has\n"
-            "the following properties:") << endl;
-  showFSInfo(config);
+            "the following properties:")
+       << endl;
+  showFSInfo(config.get());
 
   if (config->externalIVChaining) {
     cout << _("-------------------------- WARNING --------------------------\n")
@@ -1120,15 +1141,17 @@ RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
               "The programs 'mutt' and 'procmail' are known to fail.  For\n"
               "more information, please see the encfs mailing list.\n"
               "If you would like to choose another configuration setting,\n"
-              "please press CTRL-C now to abort and start over.") << endl;
+              "please press CTRL-C now to abort and start over.")
+         << endl;
     cout << endl;
   }
 
   // xgroup(setup)
-  cout << _("Now you will need to enter a password for your filesystem.\n"
-            "You will need to remember this password, as there is absolutely\n"
-            "no recovery mechanism.  However, the password can be changed\n"
-            "later using encfsctl.\n\n");
+  cout << _(
+      "Now you will need to enter a password for your filesystem.\n"
+      "You will need to remember this password, as there is absolutely\n"
+      "no recovery mechanism.  However, the password can be changed\n"
+      "later using encfsctl.\n\n");
 
   int encodedKeySize = cipher->encodedKeySize();
   unsigned char *encodedKey = new unsigned char[encodedKeySize];
@@ -1137,7 +1160,7 @@ RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
 
   // get user key and use it to encode volume key
   CipherKey userKey;
-  rDebug("useStdin: %i", useStdin);
+  VLOG(1) << "useStdin: " << useStdin;
   if (useStdin) {
     if (annotate) cerr << "$PROMPT$ new_passwd" << endl;
     userKey = config->getUserKey(useStdin);
@@ -1153,19 +1176,21 @@ RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
   delete[] encodedKey;
 
   if (!volumeKey) {
-    rWarning(
-        _("Failure generating new volume key! "
-          "Please report this error."));
+    cerr << _(
+        "Failure generating new volume key! "
+        "Please report this error.");
     return rootInfo;
   }
 
-  if (!saveConfig(Config_V6, rootDir, config)) return rootInfo;
+  if (!saveConfig(Config_V6, rootDir, config.get())) {
+    return rootInfo;
+  }
 
   // fill in config struct
-  shared_ptr<NameIO> nameCoder =
+  std::shared_ptr<NameIO> nameCoder =
       NameIO::New(config->nameIface, cipher, volumeKey);
   if (!nameCoder) {
-    rWarning(_("Name coding interface not supported"));
+    cerr << _("Name coding interface not supported");
     cout << _("The filename encoding interface requested is not available")
          << endl;
     return rootInfo;
@@ -1187,20 +1212,20 @@ RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
   rootInfo = RootPtr(new EncFS_Root);
   rootInfo->cipher = cipher;
   rootInfo->volumeKey = volumeKey;
-  rootInfo->root = shared_ptr<DirNode>(new DirNode(ctx, rootDir, fsConfig));
+  rootInfo->root =
+      std::shared_ptr<DirNode>(new DirNode(ctx, rootDir, fsConfig));
 
   return rootInfo;
 }
 
-void showFSInfo(const shared_ptr<EncFSConfig> &config) {
-  shared_ptr<Cipher> cipher = Cipher::New(config->cipherIface, -1);
+void showFSInfo(const EncFSConfig *config) {
+  std::shared_ptr<Cipher> cipher = Cipher::New(config->cipherIface, -1);
   {
     cout << autosprintf(
-                // xgroup(diag)
-                _("Filesystem cipher: \"%s\", version %i:%i:%i"),
-                config->cipherIface.name().c_str(),
-                config->cipherIface.current(), config->cipherIface.revision(),
-                config->cipherIface.age());
+        // xgroup(diag)
+        _("Filesystem cipher: \"%s\", version %i:%i:%i"),
+        config->cipherIface.name().c_str(), config->cipherIface.current(),
+        config->cipherIface.revision(), config->cipherIface.age());
     // check if we support this interface..
     if (!cipher)
       cout << _(" (NOT supported)\n");
@@ -1210,7 +1235,7 @@ void showFSInfo(const shared_ptr<EncFSConfig> &config) {
         Interface iface = cipher->interface();
         // xgroup(diag)
         cout << autosprintf(_(" (using %i:%i:%i)\n"), iface.current(),
-                    iface.revision(), iface.age());
+                            iface.revision(), iface.age());
       } else
         cout << "\n";
     }
@@ -1218,11 +1243,12 @@ void showFSInfo(const shared_ptr<EncFSConfig> &config) {
   {
     // xgroup(diag)
     cout << autosprintf(_("Filename encoding: \"%s\", version %i:%i:%i"),
-                config->nameIface.name().c_str(), config->nameIface.current(),
-                config->nameIface.revision(), config->nameIface.age());
+                        config->nameIface.name().c_str(),
+                        config->nameIface.current(),
+                        config->nameIface.revision(), config->nameIface.age());
 
     // check if we support the filename encoding interface..
-    shared_ptr<NameIO> nameCoder =
+    std::shared_ptr<NameIO> nameCoder =
         NameIO::New(config->nameIface, cipher, CipherKey());
     if (!nameCoder) {
       // xgroup(diag)
@@ -1232,7 +1258,7 @@ void showFSInfo(const shared_ptr<EncFSConfig> &config) {
       if (config->nameIface != nameCoder->interface()) {
         Interface iface = nameCoder->interface();
         cout << autosprintf(_(" (using %i:%i:%i)\n"), iface.current(),
-                    iface.revision(), iface.age());
+                            iface.revision(), iface.age());
       } else
         cout << "\n";
     }
@@ -1248,8 +1274,10 @@ void showFSInfo(const shared_ptr<EncFSConfig> &config) {
   }
   if (config->kdfIterations > 0 && config->salt.size() > 0) {
     cout << autosprintf(_("Using PBKDF2, with %i iterations"),
-                config->kdfIterations) << "\n";
-    cout << autosprintf(_("Salt Size: %i bits"), (int)(8 * config->salt.size())) << "\n";
+                        config->kdfIterations)
+         << "\n";
+    cout << autosprintf(_("Salt Size: %i bits"), (int)(8 * config->salt.size()))
+         << "\n";
   }
   if (config->blockMACBytes || config->blockMACRandBytes) {
     if (config->subVersion < 20040813) {
@@ -1257,14 +1285,16 @@ void showFSInfo(const shared_ptr<EncFSConfig> &config) {
                   // xgroup(diag)
                   _("Block Size: %i bytes + %i byte MAC header"),
                   config->blockSize,
-                  config->blockMACBytes + config->blockMACRandBytes) << endl;
+                  config->blockMACBytes + config->blockMACRandBytes)
+           << endl;
     } else {
       // new version stores the header as part of that block size..
       cout << autosprintf(
                   // xgroup(diag)
                   _("Block Size: %i bytes, including %i byte MAC header"),
                   config->blockSize,
-                  config->blockMACBytes + config->blockMACRandBytes) << endl;
+                  config->blockMACBytes + config->blockMACRandBytes)
+           << endl;
     }
   } else {
     // xgroup(diag)
@@ -1290,8 +1320,7 @@ void showFSInfo(const shared_ptr<EncFSConfig> &config) {
   }
   cout << "\n";
 }
-
-shared_ptr<Cipher> EncFSConfig::getCipher() const {
+std::shared_ptr<Cipher> EncFSConfig::getCipher() const {
   return Cipher::New(cipherIface, keySize);
 }
 
@@ -1317,7 +1346,7 @@ unsigned char *EncFSConfig::getSaltData() const {
 
 CipherKey EncFSConfig::makeKey(const char *password, int passwdLen) {
   CipherKey userKey;
-  shared_ptr<Cipher> cipher = getCipher();
+  std::shared_ptr<Cipher> cipher = getCipher();
 
   // if no salt is set and we're creating a new password for a new
   // FS type, then initialize salt..
@@ -1405,7 +1434,7 @@ CipherKey EncFSConfig::getUserKey(const std::string &passProg,
     perror(_("Internal error: socketpair() failed"));
     return result;
   }
-  rDebug("getUserKey: fds = %i, %i", fds[0], fds[1]);
+  VLOG(1) << "getUserKey: fds = " << fds[0] << ", " << fds[1];
 
   pid = fork();
   if (pid == -1) {
@@ -1448,7 +1477,7 @@ CipherKey EncFSConfig::getUserKey(const std::string &passProg,
     snprintf(tmpBuf, sizeof(tmpBuf) - 1, "%i", stdErrCopy);
     setenv(ENCFS_ENV_STDERR, tmpBuf, 1);
 
-    execvp(argv[0], (char * const *)argv);  // returns only on error..
+    execvp(argv[0], (char *const *)argv);  // returns only on error..
 
     perror(_("Internal error: failed to exec program"));
     exit(1);
@@ -1496,33 +1525,37 @@ CipherKey EncFSConfig::getNewUserKey() {
   return userKey;
 }
 
-RootPtr initFS(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
+RootPtr initFS(EncFS_Context *ctx, const std::shared_ptr<EncFS_Opts> &opts) {
   RootPtr rootInfo;
-  shared_ptr<EncFSConfig> config(new EncFSConfig);
+  std::shared_ptr<EncFSConfig> config(new EncFSConfig);
 
-  if (readConfig(opts->rootDir, config) != Config_None) {
+  if (readConfig(opts->rootDir, config.get()) != Config_None) {
     if (config->blockMACBytes == 0 && opts->requireMac) {
-      cout
-         << _("The configuration disabled MAC, but you passed --require-macs\n");
+      cout << _(
+          "The configuration disabled MAC, but you passed --require-macs\n");
       return rootInfo;
     }
 
     if (opts->reverseEncryption) {
       if (config->blockMACBytes != 0 || config->blockMACRandBytes != 0 ||
-          config->externalIVChaining ||
-          config->chainedNameIV) {
-        cout
-            << _("The configuration loaded is not compatible with --reverse\n");
+          config->externalIVChaining || config->chainedNameIV) {
+        cout << _(
+            "The configuration loaded is not compatible with --reverse\n");
         return rootInfo;
       }
+      /* Reverse mounts are read-only by default (set in main.cpp).
+       * If uniqueIV is off, writing can be allowed, because there
+       * is no header that could be overwritten */
+      if (config->uniqueIV == false) opts->readOnly = false;
     }
 
     // first, instanciate the cipher.
-    shared_ptr<Cipher> cipher = config->getCipher();
+    std::shared_ptr<Cipher> cipher = config->getCipher();
     if (!cipher) {
-      rError(_("Unable to find cipher %s, version %i:%i:%i"),
-             config->cipherIface.name().c_str(), config->cipherIface.current(),
-             config->cipherIface.revision(), config->cipherIface.age());
+      cerr << autosprintf(
+          _("Unable to find cipher %s, version %i:%i:%i"),
+          config->cipherIface.name().c_str(), config->cipherIface.current(),
+          config->cipherIface.revision(), config->cipherIface.age());
       // xgroup(diag)
       cout << _("The requested cipher interface is not available\n");
       return rootInfo;
@@ -1531,7 +1564,7 @@ RootPtr initFS(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
     if (opts->delayMount) {
       rootInfo = RootPtr(new EncFS_Root);
       rootInfo->cipher = cipher;
-      rootInfo->root = shared_ptr<DirNode>();
+      rootInfo->root = std::shared_ptr<DirNode>();
       return rootInfo;
     }
 
@@ -1539,7 +1572,7 @@ RootPtr initFS(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
     CipherKey userKey;
 
     if (opts->passwordProgram.empty()) {
-      rDebug("useStdin: %i", opts->useStdin);
+      VLOG(1) << "useStdin: " << opts->useStdin;
       if (opts->annotate) cerr << "$PROMPT$ passwd" << endl;
       userKey = config->getUserKey(opts->useStdin);
     } else
@@ -1547,7 +1580,7 @@ RootPtr initFS(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
 
     if (!userKey) return rootInfo;
 
-    rDebug("cipher key size = %i", cipher->encodedKeySize());
+    VLOG(1) << "cipher key size = " << cipher->encodedKeySize();
     // decode volume key..
     CipherKey volumeKey =
         cipher->readKey(config->getKeyData(), userKey, opts->checkKey);
@@ -1559,15 +1592,17 @@ RootPtr initFS(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
       return rootInfo;
     }
 
-    shared_ptr<NameIO> nameCoder =
+    std::shared_ptr<NameIO> nameCoder =
         NameIO::New(config->nameIface, cipher, volumeKey);
     if (!nameCoder) {
-      rError(_("Unable to find nameio interface %s, version %i:%i:%i"),
-             config->nameIface.name().c_str(), config->nameIface.current(),
-             config->nameIface.revision(), config->nameIface.age());
+      cerr << autosprintf(
+          _("Unable to find nameio interface '%s', version %i:%i:%i"),
+          config->nameIface.name().c_str(), config->nameIface.current(),
+          config->nameIface.revision(), config->nameIface.age());
       // xgroup(diag)
-      cout << _("The requested filename coding interface is "
-                "not available\n");
+      cout << _(
+          "The requested filename coding interface is "
+          "not available\n");
       return rootInfo;
     }
 
@@ -1587,7 +1622,7 @@ RootPtr initFS(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
     rootInfo->cipher = cipher;
     rootInfo->volumeKey = volumeKey;
     rootInfo->root =
-        shared_ptr<DirNode>(new DirNode(ctx, opts->rootDir, fsConfig));
+        std::shared_ptr<DirNode>(new DirNode(ctx, opts->rootDir, fsConfig));
   } else {
     if (opts->createIfNotFound) {
       // creating a new encrypted filesystem
@@ -1599,14 +1634,16 @@ RootPtr initFS(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts) {
 }
 
 int remountFS(EncFS_Context *ctx) {
-  rDebug("Attempting to reinitialize filesystem");
+  VLOG(1) << "Attempting to reinitialize filesystem";
 
   RootPtr rootInfo = initFS(ctx, ctx->opts);
   if (rootInfo) {
     ctx->setRoot(rootInfo->root);
     return 0;
   } else {
-    rInfo(_("Remount failed"));
+    RLOG(WARNING) << "Remount failed";
     return -EACCES;
   }
 }
+
+}  // namespace encfs

@@ -21,9 +21,14 @@
 #ifndef _BlockNameIO_incl_
 #define _BlockNameIO_incl_
 
-#include "NameIO.h"
-#include "CipherKey.h"
-#include "shared_ptr.h"
+#include <memory>
+#include <stdint.h>  // for uint64_t
+
+#include "CipherKey.h"  // for CipherKey
+#include "Interface.h"  // for Interface
+#include "NameIO.h"     // for NameIO
+
+namespace encfs {
 
 class Cipher;
 
@@ -34,14 +39,14 @@ class Cipher;
 */
 class BlockNameIO : public NameIO {
  public:
-  static rel::Interface CurrentInterface(bool caseSensitive = false);
+  static Interface CurrentInterface(bool caseInsensitive = false);
 
-  BlockNameIO(const rel::Interface &iface, const shared_ptr<Cipher> &cipher,
+  BlockNameIO(const Interface &iface, const std::shared_ptr<Cipher> &cipher,
               const CipherKey &key, int blockSize,
-              bool caseSensitiveEncoding = false);
+              bool caseInsensitiveEncoding = false);
   virtual ~BlockNameIO();
 
-  virtual rel::Interface interface() const;
+  virtual Interface interface() const;
 
   virtual int maxEncodedNameLen(int plaintextNameLen) const;
   virtual int maxDecodedNameLen(int encodedNameLen) const;
@@ -51,16 +56,18 @@ class BlockNameIO : public NameIO {
 
  protected:
   virtual int encodeName(const char *plaintextName, int length, uint64_t *iv,
-                         char *encodedName) const;
+                         char *encodedName, int bufferLength) const;
   virtual int decodeName(const char *encodedName, int length, uint64_t *iv,
-                         char *plaintextName) const;
+                         char *plaintextName, int bufferLength) const;
 
  private:
   int _interface;
   int _bs;
-  shared_ptr<Cipher> _cipher;
+  std::shared_ptr<Cipher> _cipher;
   CipherKey _key;
-  bool _caseSensitive;
+  bool _caseInsensitive;
 };
+
+}  // namespace encfs
 
 #endif

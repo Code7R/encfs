@@ -21,7 +21,9 @@
 #ifndef _CipherKey_incl_
 #define _CipherKey_incl_
 
-#include "shared_ptr.h"
+#include <memory>
+
+namespace encfs {
 
 class AbstractCipherKey {
  public:
@@ -29,6 +31,8 @@ class AbstractCipherKey {
   virtual ~AbstractCipherKey();
 };
 
-typedef shared_ptr<AbstractCipherKey> CipherKey;
+typedef std::shared_ptr<AbstractCipherKey> CipherKey;
+
+}  // namespace encfs
 
 #endif

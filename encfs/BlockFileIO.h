@@ -21,8 +21,12 @@
 #ifndef _BlockFileIO_incl_
 #define _BlockFileIO_incl_
 
-#include "FileIO.h"
+#include <sys/types.h>
+
 #include "FSConfig.h"
+#include "FileIO.h"
+
+namespace encfs {
 
 /*
     Implements block scatter / gather interface.  Requires derived classes to
@@ -62,5 +66,7 @@ class BlockFileIO : public FileIO {
   // cache last block for speed...
   mutable IORequest _cache;
 };
+
+}  // namespace encfs
 
 #endif

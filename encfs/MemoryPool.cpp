@@ -19,12 +19,9 @@
  */
 
 #include "MemoryPool.h"
-#include <rlog/rlog.h>
 
-#include <cstdlib>
 #include <cstring>
-
-#include "config.h"
+#include <openssl/ossl_typ.h>
 #include <pthread.h>
 
 #ifdef HAVE_VALGRIND_MEMCHECK_H
@@ -34,10 +31,11 @@
 #define VALGRIND_MAKE_MEM_UNDEFINED(a, b)
 #endif
 
-using namespace rlog;
-
 #include <openssl/buffer.h>
-#define BLOCKDATA(BLOCK) (unsigned char *) BLOCK->data->data
+
+#define BLOCKDATA(BLOCK) (unsigned char *)BLOCK->data->data
+
+namespace encfs {
 
 struct BlockList {
   BlockList *next;
@@ -128,3 +126,5 @@ void MemoryPool::destroyAll() {
     block = next;
   }
 }
+
+}  // namespace encfs

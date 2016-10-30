@@ -21,10 +21,16 @@
 #ifndef _FileUtils_incl_
 #define _FileUtils_incl_
 
-#include "encfs.h"
-#include "Interface.h"
+#include <memory>
+#include <string>
+#include <sys/types.h>
+
 #include "CipherKey.h"
 #include "FSConfig.h"
+#include "Interface.h"
+#include "encfs.h"
+
+namespace encfs {
 
 // true if the path points to an existing node (of any type)
 bool fileExists(const char *fileName);
@@ -46,15 +52,15 @@ class Cipher;
 class DirNode;
 
 struct EncFS_Root {
-  shared_ptr<Cipher> cipher;
+  std::shared_ptr<Cipher> cipher;
   CipherKey volumeKey;
-  shared_ptr<DirNode> root;
+  std::shared_ptr<DirNode> root;
 
   EncFS_Root();
   ~EncFS_Root();
 };
 
-typedef shared_ptr<EncFS_Root> RootPtr;
+typedef std::shared_ptr<EncFS_Root> RootPtr;
 
 enum ConfigMode { Config_Prompt, Config_Standard, Config_Paranoia };
 
@@ -65,10 +71,11 @@ enum ConfigMode { Config_Prompt, Config_Standard, Config_Paranoia };
  */
 struct EncFS_Opts {
   std::string rootDir;
-  bool createIfNotFound;  // create filesystem if not found
-  bool idleTracking;      // turn on idle monitoring of filesystem
-  bool mountOnDemand;     // mounting on-demand
-  bool delayMount;        // delay initial mount
+  std::string mountPoint;  // where to make filesystem visible
+  bool createIfNotFound;   // create filesystem if not found
+  bool idleTracking;       // turn on idle monitoring of filesystem
+  bool mountOnDemand;      // mounting on-demand
+  bool delayMount;         // delay initial mount
 
   bool checkKey;     // check crypto key decoding
   bool forceDecode;  // force decode on MAC block failures
@@ -86,9 +93,9 @@ struct EncFS_Opts {
                  * behind the back of EncFS (for example, in reverse mode).
                  * See main.cpp for a longer explaination. */
 
-  bool readOnly; // Mount read-only
+  bool readOnly;  // Mount read-only
 
-  bool requireMac; // Throw an error if MAC is disabled
+  bool requireMac;  // Throw an error if MAC is disabled
 
   ConfigMode configMode;
 
@@ -113,37 +120,36 @@ struct EncFS_Opts {
 /*
     Read existing config file.  Looks for any supported configuration version.
 */
-ConfigType readConfig(const std::string &rootDir,
-                      const shared_ptr<EncFSConfig> &config);
+ConfigType readConfig(const std::string &rootDir, EncFSConfig *config);
 
 /*
     Save the configuration.  Saves back as the same configuration type as was
     read from.
 */
 bool saveConfig(ConfigType type, const std::string &rootdir,
-                const shared_ptr<EncFSConfig> &config);
+                const EncFSConfig *config);
 
 class EncFS_Context;
 
-RootPtr initFS(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts);
+RootPtr initFS(EncFS_Context *ctx, const std::shared_ptr<EncFS_Opts> &opts);
 
-RootPtr createV6Config(EncFS_Context *ctx, const shared_ptr<EncFS_Opts> &opts);
+RootPtr createV6Config(EncFS_Context *ctx,
+                       const std::shared_ptr<EncFS_Opts> &opts);
 
-void showFSInfo(const shared_ptr<EncFSConfig> &config);
+void showFSInfo(const EncFSConfig *config);
 
-bool readV4Config(const char *configFile, const shared_ptr<EncFSConfig> &config,
+bool readV4Config(const char *configFile, EncFSConfig *config,
                   struct ConfigInfo *);
-bool writeV4Config(const char *configFile,
-                   const shared_ptr<EncFSConfig> &config);
+bool writeV4Config(const char *configFile, const EncFSConfig *config);
 
-bool readV5Config(const char *configFile, const shared_ptr<EncFSConfig> &config,
+bool readV5Config(const char *configFile, EncFSConfig *config,
                   struct ConfigInfo *);
-bool writeV5Config(const char *configFile,
-                   const shared_ptr<EncFSConfig> &config);
+bool writeV5Config(const char *configFile, const EncFSConfig *config);
 
-bool readV6Config(const char *configFile, const shared_ptr<EncFSConfig> &config,
+bool readV6Config(const char *configFile, EncFSConfig *config,
                   struct ConfigInfo *);
-bool writeV6Config(const char *configFile,
-                   const shared_ptr<EncFSConfig> &config);
+bool writeV6Config(const char *configFile, const EncFSConfig *config);
+
+}  // namespace encfs
 
 #endif

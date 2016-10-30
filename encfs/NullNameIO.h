@@ -21,17 +21,22 @@
 #ifndef _NullNameIO_incl_
 #define _NullNameIO_incl_
 
+#include <stdint.h>
+
+#include "Interface.h"
 #include "NameIO.h"
+
+namespace encfs {
 
 class NullNameIO : public NameIO {
  public:
-  static rel::Interface CurrentInterface();
+  static Interface CurrentInterface();
 
   NullNameIO();
 
   virtual ~NullNameIO();
 
-  virtual rel::Interface interface() const;
+  virtual Interface interface() const;
 
   virtual int maxEncodedNameLen(int plaintextNameLen) const;
   virtual int maxDecodedNameLen(int encodedNameLen) const;
@@ -41,11 +46,13 @@ class NullNameIO : public NameIO {
 
  protected:
   virtual int encodeName(const char *plaintextName, int length, uint64_t *iv,
-                         char *encodedName) const;
+                         char *encodedName, int bufferLength) const;
   virtual int decodeName(const char *encodedName, int length, uint64_t *iv,
-                         char *plaintextName) const;
+                         char *plaintextName, int bufferLength) const;
 
  private:
 };
+
+}  // namespace encfs
 
 #endif

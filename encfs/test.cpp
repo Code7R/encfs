@@ -16,45 +16,46 @@
  *
  */
 
-#include "encfs.h"
-
-#include "config.h"
-
-#include <iostream>
-
+#include <cstdio>
 #include <cstdlib>
+#include <iostream>
+#include <list>
+#include <memory>
 #include <sstream>
+#include <string>
+#include <time.h>
+#include <unistd.h>
 
-#include "Cipher.h"
-#include "DirNode.h"
-#include "MemoryPool.h"
-#include "Interface.h"
-#include "FileUtils.h"
-#include "StreamNameIO.h"
 #include "BlockNameIO.h"
-#include "NullNameIO.h"
+#include "Cipher.h"
+#include "CipherKey.h"
+#include "DirNode.h"
+#include "Error.h"
+#include "FSConfig.h"
+#include "FileUtils.h"
+#include "Interface.h"
+#include "MemoryPool.h"
+#include "NameIO.h"
+#include "Range.h"
+#include "StreamNameIO.h"
+#include "internal/easylogging++.h"
 
-#include <rlog/rlog.h>
-#include <rlog/Error.h>
-#include <rlog/StdioNode.h>
-#include <rlog/RLogChannel.h>
-
-#ifdef HAVE_SSL
 #define NO_DES
 #include <openssl/ssl.h>
 #ifndef OPENSSL_NO_ENGINE
 #include <openssl/engine.h>
 #endif
-#endif
 
 using namespace std;
-using namespace rel;
-using namespace rlog;
+using namespace encfs;
+
+INITIALIZE_EASYLOGGINGPP
 
 const int FSBlockSize = 256;
 
-static int checkErrorPropogation(const shared_ptr<Cipher> &cipher, int size,
-                                 int byteToChange, const CipherKey &key) {
+static int checkErrorPropogation(const std::shared_ptr<Cipher> &cipher,
+                                 int size, int byteToChange,
+                                 const CipherKey &key) {
   MemBlock orig = MemoryPool::allocate(size);
   MemBlock data = MemoryPool::allocate(size);
 
@@ -130,17 +131,18 @@ static bool testNameCoding(DirNode &dirNode, bool verbose) {
   return true;
 }
 
-bool runTests(const shared_ptr<Cipher> &cipher, bool verbose) {
+bool runTests(const std::shared_ptr<Cipher> &cipher, bool verbose) {
   // create a random key
-  if (verbose)
+  if (verbose) {
     cerr << "Generating new key, output will be different on each run\n\n";
+  }
   CipherKey key = cipher->newRandomKey();
 
   if (verbose) cerr << "Testing key save / restore :";
   {
     CipherKey encodingKey = cipher->newRandomKey();
     int encodedKeySize = cipher->encodedKeySize();
-    unsigned char *keyBuf = new unsigned char[encodedKeySize];
+    unsigned char keyBuf[encodedKeySize];
 
     cipher->writeKey(key, keyBuf, encodingKey);
     CipherKey key2 = cipher->readKey(keyBuf, encodingKey);
@@ -161,7 +163,7 @@ bool runTests(const shared_ptr<Cipher> &cipher, bool verbose) {
   {
     CipherKey encodingKey = cipher->newRandomKey();
     int encodedKeySize = cipher->encodedKeySize();
-    unsigned char *keyBuf = new unsigned char[encodedKeySize];
+    unsigned char keyBuf[encodedKeySize];
 
     cipher->writeKey(key, keyBuf, encodingKey);
 
@@ -173,18 +175,17 @@ bool runTests(const shared_ptr<Cipher> &cipher, bool verbose) {
     cfg.assignKeyData(keyBuf, encodedKeySize);
 
     // save config
-    string data;
+    auto name = std::tmpnam(nullptr);
     {
-      ostringstream st;
-      st << cfg;
-      data = st.str();
+      auto ok = writeV6Config(name, &cfg);
+      rAssert(ok == true);
     }
 
     // read back in and check everything..
     EncFSConfig cfg2;
     {
-      istringstream st(data);
-      st >> cfg2;
+      auto ok = readV6Config(name, &cfg2, nullptr);
+      rAssert(ok == true);
     }
 
     // check..
@@ -264,7 +265,7 @@ bool runTests(const shared_ptr<Cipher> &cipher, bool verbose) {
   if (!verbose) {
     {
       // test stream mode, this time without IV chaining
-      fsCfg->nameCoding = shared_ptr<NameIO>(
+      fsCfg->nameCoding = std::shared_ptr<NameIO>(
           new StreamNameIO(StreamNameIO::CurrentInterface(), cipher, key));
       fsCfg->nameCoding->setChainedNameIV(false);
 
@@ -275,7 +276,7 @@ bool runTests(const shared_ptr<Cipher> &cipher, bool verbose) {
 
     {
       // test block mode, this time without IV chaining
-      fsCfg->nameCoding = shared_ptr<NameIO>(
+      fsCfg->nameCoding = std::shared_ptr<NameIO>(
           new BlockNameIO(BlockNameIO::CurrentInterface(), cipher, key,
                           cipher->cipherBlockSize()));
       fsCfg->nameCoding->setChainedNameIV(false);
@@ -329,7 +330,7 @@ bool runTests(const shared_ptr<Cipher> &cipher, bool verbose) {
     if (verbose) {
       cerr << "modification of 1 byte affected between " << minChanges
            << " and " << maxChanges << " decoded bytes\n";
-      cerr << "minimum change at byte " << minAt << " and  maximum at byte "
+      cerr << "minimum change at byte " << minAt << " and maximum at byte "
            << maxAt << "\n";
     }
   }
@@ -355,7 +356,7 @@ bool runTests(const shared_ptr<Cipher> &cipher, bool verbose) {
     if (verbose) {
       cerr << "modification of 1 byte affected between " << minChanges
            << " and " << maxChanges << " decoded bytes\n";
-      cerr << "minimum change at byte " << minAt << " and  maximum at byte "
+      cerr << "minimum change at byte " << minAt << " and maximum at byte "
            << maxAt << "\n";
     }
   }
@@ -365,9 +366,10 @@ bool runTests(const shared_ptr<Cipher> &cipher, bool verbose) {
 
 static bool testCipherSize(const string &name, int keySize, int blockSize,
                            bool verbose) {
-  cerr << name << ", key length " << keySize << ", block size " << blockSize << ":  ";
+  cerr << name << ", key length " << keySize << ", block size " << blockSize
+       << ":  ";
 
-  shared_ptr<Cipher> cipher = Cipher::New(name, keySize);
+  std::shared_ptr<Cipher> cipher = Cipher::New(name, keySize);
   if (!cipher) {
     cerr << "FAILED TO CREATE\n";
     return false;
@@ -379,7 +381,7 @@ static bool testCipherSize(const string &name, int keySize, int blockSize,
         cerr << "FAILED\n";
         return false;
       }
-    } catch (rlog::Error &er) {
+    } catch (encfs::Error &er) {
       cerr << "Error: " << er.what() << "\n";
       return false;
     }
@@ -388,16 +390,9 @@ static bool testCipherSize(const string &name, int keySize, int blockSize,
 }
 
 int main(int argc, char *argv[]) {
-  RLogInit(argc, argv);
+  START_EASYLOGGINGPP(argc, argv);
+  encfs::initLogging();
 
-  StdioNode stdLog(STDERR_FILENO);
-  stdLog.subscribeTo(RLOG_CHANNEL("error"));
-  stdLog.subscribeTo(RLOG_CHANNEL("warning"));
-#ifndef NO_DEBUG
-  stdLog.subscribeTo(RLOG_CHANNEL("debug"));
-#endif
-
-#ifdef HAVE_SSL
   SSL_load_error_strings();
   SSL_library_init();
 
@@ -406,7 +401,6 @@ int main(int argc, char *argv[]) {
   ENGINE_register_all_ciphers();
   ENGINE_register_all_digests();
   ENGINE_register_all_RAND();
-#endif
 #endif
 
   srand(time(0));
@@ -433,15 +427,15 @@ int main(int argc, char *argv[]) {
       if (!testCipherSize(it->name, keySize, blockSize, false)) {
         // Run again in verbose mode, then exit with error.
         if (testCipherSize(it->name, keySize, blockSize, true)) {
-	  cerr << "Inconsistent test results!\n";
-	}
+          cerr << "Inconsistent test results!\n";
+        }
         return 1;
       }
     }
   }
 
   // run one test with verbose output too..
-  shared_ptr<Cipher> cipher = Cipher::New("AES", 192);
+  std::shared_ptr<Cipher> cipher = Cipher::New("AES", 192);
   if (!cipher) {
     cerr << "\nNo AES cipher found, skipping verbose test.\n";
   } else {

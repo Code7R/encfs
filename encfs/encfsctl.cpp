@@ -15,47 +15,51 @@
  * more details.
  */
 
-#include "encfs.h"
-
 #include <fcntl.h>
 #include <getopt.h>
 #include <iostream>
+#include <limits.h>
+#include <memory>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <string>
 #include <sys/stat.h>
-#include <sys/types.h>
-#include <limits.h>
+#include <time.h>
+#include <unistd.h>
+#include <vector>
 
-#include <rlog/rlog.h>
-#include <rlog/StdioNode.h>
-#include <rlog/RLogChannel.h>
-
-#ifdef HAVE_SSL
 #define NO_DES
 #include <openssl/ssl.h>
-#endif
 
 #include "Cipher.h"
-#include "Context.h"
+#include "CipherKey.h"
 #include "DirNode.h"
+#include "Error.h"
+#include "FSConfig.h"
 #include "FileNode.h"
 #include "FileUtils.h"
+#include "Interface.h"
 #include "autosprintf.h"
 #include "config.h"
 #include "i18n.h"
-#include "shared_ptr.h"
+#include "intl/gettext.h"
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
 
-using namespace rlog;
 using namespace std;
 using gnu::autosprintf;
+using namespace encfs;
+
+INITIALIZE_EASYLOGGINGPP
 
 static int showInfo(int argc, char **argv);
 static int showVersion(int argc, char **argv);
 static int chpasswd(int argc, char **argv);
 static int chpasswdAutomaticly(int argc, char **argv);
+static int ckpasswdAutomaticly(int argc, char **argv);
 static int cmd_ls(int argc, char **argv);
 static int cmd_decode(int argc, char **argv);
 static int cmd_encode(int argc, char **argv);
@@ -72,42 +76,45 @@ struct CommandOpts {
   const char *argStr;
   const char *usageStr;
 } commands[] = {
-      {"info", 1, 1, showInfo, "(root dir)",
-       // xgroup(usage)
-       gettext_noop("  -- show information (Default command)")},
-      {"showKey", 1, 1, cmd_showKey, "(root dir)",
-       // xgroup(usage)
-       gettext_noop("  -- show key")},
-      {"passwd", 1, 1, chpasswd, "(root dir)",
-       // xgroup(usage)
-       gettext_noop("  -- change password for volume")},
-      {"autopasswd", 1, 1, chpasswdAutomaticly, "(root dir)",
-       // xgroup(usage)
-       gettext_noop(
-           "  -- change password for volume, taking password"
-           " from standard input.\n\tNo prompts are issued.")},
-      {"ls", 1, 2, cmd_ls, 0, 0},
-      {"showcruft", 1, 1, cmd_showcruft, "(root dir)",
-       // xgroup(usage)
-       gettext_noop("  -- show undecodable filenames in the volume")},
-      {"cat", 2, 2, cmd_cat, "(root dir) path",
-       // xgroup(usage)
-       gettext_noop("  -- decodes the file and cats it to standard out")},
-      {"decode", 1, 100, cmd_decode,
-       "[--extpass=prog] (root dir) [encoded-name ...]",
-       // xgroup(usage)
-       gettext_noop("  -- decodes name and prints plaintext version")},
-      {"encode", 1, 100, cmd_encode,
-       "[--extpass=prog] (root dir) [plaintext-name ...]",
-       // xgroup(usage)
-       gettext_noop("  -- encodes a filename and print result")},
-      {"export", 2, 2, cmd_export, "(root dir) path",
-       // xgroup(usage)
-       gettext_noop("  -- decrypts a volume and writes results to path")},
-      {"--version", 0, 0, showVersion, "",
-       // xgroup(usage)
-       gettext_noop("  -- print version number and exit")},
-      {0, 0, 0, 0, 0, 0}};
+    {"info", 1, 1, showInfo, "(root dir)",
+     // xgroup(usage)
+     gettext_noop("  -- show information (Default command)")},
+    {"showKey", 1, 1, cmd_showKey, "(root dir)",
+     // xgroup(usage)
+     gettext_noop("  -- show key")},
+    {"passwd", 1, 1, chpasswd, "(root dir)",
+     // xgroup(usage)
+     gettext_noop("  -- change password for volume")},
+    {"autopasswd", 1, 1, chpasswdAutomaticly, "(root dir)",
+     // xgroup(usage)
+     gettext_noop("  -- change password for volume, taking password"
+                  " from standard input.\n\tNo prompts are issued.")},
+    {"autocheckpasswd", 1, 1, ckpasswdAutomaticly, "(root dir)",
+     // xgroup(usage)
+     gettext_noop("  -- check password for volume, taking password"
+                  " from standard input.\n\tNo prompts are issued.")},
+    {"ls", 1, 2, cmd_ls, 0, 0},
+    {"showcruft", 1, 1, cmd_showcruft, "(root dir)",
+     // xgroup(usage)
+     gettext_noop("  -- show undecodable filenames in the volume")},
+    {"cat", 2, 3, cmd_cat, "[--extpass=prog] (root dir) path",
+     // xgroup(usage)
+     gettext_noop("  -- decodes the file and cats it to standard out")},
+    {"decode", 1, 100, cmd_decode,
+     "[--extpass=prog] (root dir) [encoded-name ...]",
+     // xgroup(usage)
+     gettext_noop("  -- decodes name and prints plaintext version")},
+    {"encode", 1, 100, cmd_encode,
+     "[--extpass=prog] (root dir) [plaintext-name ...]",
+     // xgroup(usage)
+     gettext_noop("  -- encodes a filename and print result")},
+    {"export", 2, 2, cmd_export, "(root dir) path",
+     // xgroup(usage)
+     gettext_noop("  -- decrypts a volume and writes results to path")},
+    {"--version", 0, 0, showVersion, "",
+     // xgroup(usage)
+     gettext_noop("  -- print version number and exit")},
+    {0, 0, 0, 0, 0, 0}};
 
 static void usage(const char *name) {
   cerr << autosprintf(_("encfsctl version %s"), VERSION) << "\n"
@@ -158,8 +165,8 @@ static int showInfo(int argc, char **argv) {
   string rootDir = argv[1];
   if (!checkDir(rootDir)) return EXIT_FAILURE;
 
-  shared_ptr<EncFSConfig> config(new EncFSConfig);
-  ConfigType type = readConfig(rootDir, config);
+  std::shared_ptr<EncFSConfig> config(new EncFSConfig);
+  ConfigType type = readConfig(rootDir, config.get());
 
   // show information stored in config..
   switch (type) {
@@ -175,38 +182,42 @@ static int showInfo(int argc, char **argv) {
       return EXIT_FAILURE;
     case Config_V3:
       // xgroup(diag)
-      cout << "\n" << autosprintf(_("Version 3 configuration; "
-                                    "created by %s\n"),
-                                  config->creator.c_str());
+      cout << "\n"
+           << autosprintf(_("Version 3 configuration; "
+                            "created by %s\n"),
+                          config->creator.c_str());
       break;
     case Config_V4:
       // xgroup(diag)
-      cout << "\n" << autosprintf(_("Version 4 configuration; "
-                                    "created by %s\n"),
-                                  config->creator.c_str());
+      cout << "\n"
+           << autosprintf(_("Version 4 configuration; "
+                            "created by %s\n"),
+                          config->creator.c_str());
       break;
     case Config_V5:
       // xgroup(diag)
-      cout << "\n" << autosprintf(_("Version 5 configuration; "
-                                    "created by %s (revision %i)\n"),
-                                  config->creator.c_str(), config->subVersion);
+      cout << "\n"
+           << autosprintf(_("Version 5 configuration; "
+                            "created by %s (revision %i)\n"),
+                          config->creator.c_str(), config->subVersion);
       break;
     case Config_V6:
       // xgroup(diag)
-      cout << "\n" << autosprintf(_("Version 6 configuration; "
-                                    "created by %s (revision %i)\n"),
-                                  config->creator.c_str(), config->subVersion);
+      cout << "\n"
+           << autosprintf(_("Version 6 configuration; "
+                            "created by %s (revision %i)\n"),
+                          config->creator.c_str(), config->subVersion);
       break;
   }
 
-  showFSInfo(config);
+  showFSInfo(config.get());
 
   return EXIT_SUCCESS;
 }
 
 static RootPtr initRootInfo(int &argc, char **&argv) {
   RootPtr result;
-  shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
+  std::shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
   opts->createIfNotFound = false;
   opts->checkKey = false;
 
@@ -223,7 +234,7 @@ static RootPtr initRootInfo(int &argc, char **&argv) {
         opts->passwordProgram.assign(optarg);
         break;
       default:
-        rWarning(_("getopt error: %i"), res);
+        RLOG(WARNING) << "getopt error: " << res;
         break;
     }
   }
@@ -253,7 +264,7 @@ static RootPtr initRootInfo(const char *crootDir) {
   RootPtr result;
 
   if (checkDir(rootDir)) {
-    shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
+    std::shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
     opts->rootDir = rootDir;
     opts->createIfNotFound = false;
     opts->checkKey = false;
@@ -332,7 +343,7 @@ static int cmd_ls(int argc, char **argv) {
     if (dt.valid()) {
       for (string name = dt.nextPlaintextName(); !name.empty();
            name = dt.nextPlaintextName()) {
-        shared_ptr<FileNode> fnode =
+        std::shared_ptr<FileNode> fnode =
             rootInfo->root->lookupNode(name.c_str(), "encfsctl-ls");
         struct stat stbuf;
         fnode->getAttr(&stbuf);
@@ -355,10 +366,10 @@ static int cmd_ls(int argc, char **argv) {
 
 // apply an operation to every block in the file
 template <typename T>
-int processContents(const shared_ptr<EncFS_Root> &rootInfo, const char *path,
-                    T &op) {
+int processContents(const std::shared_ptr<EncFS_Root> &rootInfo,
+                    const char *path, T &op) {
   int errCode = 0;
-  shared_ptr<FileNode> node =
+  std::shared_ptr<FileNode> node =
       rootInfo->root->openNode(path, "encfsctl", O_RDONLY, &errCode);
 
   if (!node) {
@@ -400,12 +411,11 @@ class WriteOutput {
 };
 
 static int cmd_cat(int argc, char **argv) {
-  (void)argc;
-  RootPtr rootInfo = initRootInfo(argv[1]);
+  RootPtr rootInfo = initRootInfo(argc, argv);
 
   if (!rootInfo) return EXIT_FAILURE;
 
-  const char *path = argv[2];
+  const char *path = argv[0];
   WriteOutput output(STDOUT_FILENO);
   int errCode = processContents(rootInfo, path, output);
 
@@ -413,8 +423,8 @@ static int cmd_cat(int argc, char **argv) {
 }
 
 static int copyLink(const struct stat &stBuf,
-                    const shared_ptr<EncFS_Root> &rootInfo, const string &cpath,
-                    const string &destName) {
+                    const std::shared_ptr<EncFS_Root> &rootInfo,
+                    const string &cpath, const string &destName) {
   std::vector<char> buf(stBuf.st_size + 1, '\0');
   int res = ::readlink(cpath.c_str(), buf.data(), stBuf.st_size);
   if (res == -1) {
@@ -434,9 +444,10 @@ static int copyLink(const struct stat &stBuf,
   return EXIT_SUCCESS;
 }
 
-static int copyContents(const shared_ptr<EncFS_Root> &rootInfo,
+static int copyContents(const std::shared_ptr<EncFS_Root> &rootInfo,
                         const char *encfsName, const char *targetName) {
-  shared_ptr<FileNode> node = rootInfo->root->lookupNode(encfsName, "encfsctl");
+  std::shared_ptr<FileNode> node =
+      rootInfo->root->lookupNode(encfsName, "encfsctl");
 
   if (!node) {
     cerr << "unable to open " << encfsName << "\n";
@@ -446,7 +457,7 @@ static int copyContents(const shared_ptr<EncFS_Root> &rootInfo,
 
     if (node->getAttr(&st) != 0) return EXIT_FAILURE;
 
-    if ((st.st_mode & S_IFLNK) == S_IFLNK) {
+    if ((st.st_mode & S_IFMT) == S_IFLNK) {
       string d = rootInfo->root->cipherPath(encfsName);
       char linkContents[PATH_MAX + 2];
 
@@ -455,7 +466,7 @@ static int copyContents(const shared_ptr<EncFS_Root> &rootInfo,
         return EXIT_FAILURE;
       }
       if (symlink(rootInfo->root->plainPath(linkContents).c_str(),
-                                            targetName) != 0) {
+                  targetName) != 0) {
         cerr << "unable to create symlink " << targetName << "\n";
         return EXIT_FAILURE;
       }
@@ -476,7 +487,7 @@ static bool endsWith(const string &str, char ch) {
     return str[str.length() - 1] == ch;
 }
 
-static int traverseDirs(const shared_ptr<EncFS_Root> &rootInfo,
+static int traverseDirs(const std::shared_ptr<EncFS_Root> &rootInfo,
                         string volumeDir, string destDir) {
   if (!endsWith(volumeDir, '/')) volumeDir.append("/");
   if (!endsWith(destDir, '/')) destDir.append("/");
@@ -485,7 +496,7 @@ static int traverseDirs(const shared_ptr<EncFS_Root> &rootInfo,
   // with the same permissions
   {
     struct stat st;
-    shared_ptr<FileNode> dirNode =
+    std::shared_ptr<FileNode> dirNode =
         rootInfo->root->lookupNode(volumeDir.c_str(), "encfsctl");
     if (dirNode->getAttr(&st)) return EXIT_FAILURE;
 
@@ -539,7 +550,8 @@ static int cmd_export(int argc, char **argv) {
   return traverseDirs(rootInfo, "/", destDir);
 }
 
-int showcruft(const shared_ptr<EncFS_Root> &rootInfo, const char *dirName) {
+int showcruft(const std::shared_ptr<EncFS_Root> &rootInfo,
+              const char *dirName) {
   int found = 0;
   DirTraverse dt = rootInfo->root->openDir(dirName);
   if (dt.valid()) {
@@ -594,21 +606,24 @@ static int cmd_showcruft(int argc, char **argv) {
 
   int filesFound = showcruft(rootInfo, "/");
 
-  // TODO: the singular version should say "Found an invalid file", but all the translations
+  // TODO: the singular version should say "Found an invalid file", but all the
+  // translations
   // depend upon this broken singular form, so it isn't easy to change.
   cerr << autosprintf(ngettext("Found %i invalid file.",
                                "Found %i invalid files.", filesFound),
-                      filesFound) << "\n";
+                      filesFound)
+       << "\n";
 
   return EXIT_SUCCESS;
 }
 
-static int do_chpasswd(bool useStdin, bool annotate, int argc, char **argv) {
+static int do_chpasswd(bool useStdin, bool annotate, bool checkOnly, int argc,
+                       char **argv) {
   (void)argc;
   string rootDir = argv[1];
   if (!checkDir(rootDir)) return EXIT_FAILURE;
 
-  shared_ptr<EncFSConfig> config(new EncFSConfig);
+  EncFSConfig *config = new EncFSConfig;
   ConfigType cfgType = readConfig(rootDir, config);
 
   if (cfgType == Config_None) {
@@ -617,7 +632,8 @@ static int do_chpasswd(bool useStdin, bool annotate, int argc, char **argv) {
   }
 
   // instanciate proper cipher
-  shared_ptr<Cipher> cipher = Cipher::New(config->cipherIface, config->keySize);
+  std::shared_ptr<Cipher> cipher =
+      Cipher::New(config->cipherIface, config->keySize);
   if (!cipher) {
     cout << autosprintf(_("Unable to find specified cipher \"%s\"\n"),
                         config->cipherIface.name().c_str());
@@ -637,6 +653,11 @@ static int do_chpasswd(bool useStdin, bool annotate, int argc, char **argv) {
   if (!volumeKey) {
     cout << _("Invalid password\n");
     return EXIT_FAILURE;
+  }
+
+  if (checkOnly) {
+    cout << _("Password is correct\n");
+    return EXIT_SUCCESS;
   }
 
   // Now, get New user key..
@@ -681,15 +702,20 @@ static int do_chpasswd(bool useStdin, bool annotate, int argc, char **argv) {
 }
 
 static int chpasswd(int argc, char **argv) {
-  return do_chpasswd(false, false, argc, argv);
+  return do_chpasswd(false, false, false, argc, argv);
 }
 
 static int chpasswdAutomaticly(int argc, char **argv) {
-  return do_chpasswd(true, false, argc, argv);
+  return do_chpasswd(true, false, false, argc, argv);
+}
+
+static int ckpasswdAutomaticly(int argc, char **argv) {
+  return do_chpasswd(true, false, true, argc, argv);
 }
 
 int main(int argc, char **argv) {
-  RLogInit(argc, argv);
+  START_EASYLOGGINGPP(argc, argv);
+  encfs::initLogging();
 
 #if defined(ENABLE_NLS) && defined(LOCALEDIR)
   setlocale(LC_ALL, "");
@@ -697,21 +723,20 @@ int main(int argc, char **argv) {
   textdomain(PACKAGE);
 #endif
 
-#ifdef HAVE_SSL
   SSL_load_error_strings();
   SSL_library_init();
-#endif
-
-  StdioNode *slog = new StdioNode(STDERR_FILENO);
-  slog->subscribeTo(GetGlobalChannel("error"));
-  slog->subscribeTo(GetGlobalChannel("warning"));
-#ifndef NO_DEBUG
-// slog->subscribeTo( GetGlobalChannel("debug") );
-#endif
 
   if (argc < 2) {
     usage(argv[0]);
     return EXIT_FAILURE;
+  }
+
+  // Skip over uninteresting args.
+  while (argc > 2 && *argv[1] == '-') {
+    VLOG(1) << "skipping arg " << argv[1];
+    argc--;
+    argv[1] = argv[0];
+    argv++;
   }
 
   if (argc == 2 && !(*argv[1] == '-' && *(argv[1] + 1) == '-')) {
@@ -733,7 +758,8 @@ int main(int argc, char **argv) {
           (argc - 2 > commands[offset].maxOptions)) {
         cerr << autosprintf(
                     _("Incorrect number of arguments for command \"%s\""),
-                    argv[1]) << "\n";
+                    argv[1])
+             << "\n";
       } else
         return (*commands[offset].func)(argc - 1, argv + 1);
     }

@@ -17,39 +17,41 @@
 
 #include "encfs.h"
 
+#include <cerrno>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
-#include <unistd.h>
 #include <fcntl.h>
-#include <dirent.h>
-#include <cerrno>
+#include <inttypes.h>
+#include <memory>
+#include <stdint.h>
+#include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/time.h>
-
-#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
+#include <utime.h>
 #ifdef linux
 #include <sys/fsuid.h>
 #endif
 
-#if HAVE_SYS_XATTR_H
+#if defined(HAVE_SYS_XATTR_H)
 #include <sys/xattr.h>
-#elif HAVE_ATTR_XATTR_H
+#elif defined(HAVE_ATTR_XATTR_H)
 #include <attr/xattr.h>
 #endif
 
+#include "internal/easylogging++.h"
 #include <functional>
-#include <map>
 #include <string>
 #include <vector>
 
-#include "DirNode.h"
-#include "MemoryPool.h"
-#include "FileUtils.h"
-#include "Mutex.h"
 #include "Context.h"
-
-#include <rlog/rlog.h>
-#include <rlog/Error.h>
+#include "DirNode.h"
+#include "Error.h"
+#include "FileNode.h"
+#include "FileUtils.h"
+#include "fuse.h"
 
 #ifndef MIN
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
@@ -59,12 +61,10 @@
 
 using namespace std;
 using namespace std::placeholders;
-using namespace rlog;
-using rel::Lock;
 
-#define GET_FN(ctx, finfo) ctx->getNode((void *)(uintptr_t) finfo->fh)
+namespace encfs {
 
-static RLogChannel *Info = DEF_CHANNEL("info", Log_Info);
+#define GET_FN(ctx, finfo) ctx->getNode((void *)(uintptr_t)finfo->fh)
 
 static EncFS_Context *context() {
   return (EncFS_Context *)fuse_get_context()->private_data;
@@ -76,8 +76,7 @@ static EncFS_Context *context() {
  * if the argument is NULL.
  */
 static bool isReadOnly(EncFS_Context *ctx) {
-  if (ctx == NULL)
-    ctx = (EncFS_Context *)fuse_get_context()->private_data;
+  if (ctx == NULL) ctx = (EncFS_Context *)fuse_get_context()->private_data;
 
   return ctx->opts->readOnly;
 }
@@ -89,24 +88,25 @@ static int withCipherPath(const char *opName, const char *path,
   EncFS_Context *ctx = context();
 
   int res = -EIO;
-  shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
+  std::shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
   if (!FSRoot) return res;
 
   try {
     string cyName = FSRoot->cipherPath(path);
-    rLog(Info, "%s %s", opName, cyName.c_str());
+    VLOG(1) << "op: " << opName << " : " << cyName;
 
     res = op(ctx, cyName);
 
     if (res == -1) {
       int eno = errno;
-      rInfo("%s error: %s", opName, strerror(eno));
+      VLOG(1) << "op: " << opName << " error: " << strerror(eno);
       res = -eno;
-    } else if (!passReturnCode)
+    } else if (!passReturnCode) {
       res = ESUCCESS;
-  } catch (rlog::Error &err) {
-    rError("withCipherPath: error caught in %s: %s", opName, err.message());
-    err.log(_RLWarningChannel);
+    }
+  } catch (encfs::Error &err) {
+    RLOG(ERROR) << "withCipherPath: error caught in " << opName << ": "
+                << err.what();
   }
   return res;
 }
@@ -118,33 +118,42 @@ static int withFileNode(const char *opName, const char *path,
   EncFS_Context *ctx = context();
 
   int res = -EIO;
-  shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
+  std::shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
   if (!FSRoot) return res;
 
   try {
-    shared_ptr<FileNode> fnode;
 
-    if (fi != NULL)
-      fnode = GET_FN(ctx, fi);
+    auto do_op = [&FSRoot, opName, &op](FileNode *fnode) {
+      rAssert(fnode != nullptr);
+      VLOG(1) << "op: " << opName << " : " << fnode->cipherName();
+
+      // check that we're not recursing into the mount point itself
+      if (FSRoot->touchesMountpoint(fnode->cipherName())) {
+        VLOG(1) << "op: " << opName << " error: Tried to touch mountpoint: '"
+                << fnode->cipherName() << "'";
+        return -EIO;
+      }
+      return op(fnode);
+    };
+
+    if (fi != nullptr && fi->fh != 0)
+      res = do_op(reinterpret_cast<FileNode *>(fi->fh));
     else
-      fnode = FSRoot->lookupNode(path, opName);
+      res = do_op(FSRoot->lookupNode(path, opName).get());
 
-    rAssert(fnode.get() != NULL);
-    rLog(Info, "%s %s", opName, fnode->cipherName());
-    res = op(fnode.get());
-
-    if (res < 0) rInfo("%s error: %s", opName, strerror(-res));
-  } catch (rlog::Error &err) {
-    rError("withFileNode: error caught in %s: %s", opName, err.message());
-    err.log(_RLWarningChannel);
+    if (res < 0) {
+      RLOG(DEBUG) << "op: " << opName << " error: " << strerror(-res);
+    }
+  } catch (encfs::Error &err) {
+    RLOG(ERROR) << "withFileNode: error caught in " << opName << ": "
+                << err.what();
   }
   return res;
 }
 
 /*
-    The rLog messages below always prints out encrypted filenames, not
-    plaintext.  The reason is so that it isn't possible to leak information
-    about the encrypted data through rlog interfaces.
+    The log messages below always print encrypted filenames, not
+    plaintext.  This avoids possibly leaking information to log files.
 
     The purpose of this layer of code is to take the FUSE request and dispatch
     to the internal interfaces.  Any marshaling of arguments and return types
@@ -155,7 +164,7 @@ int _do_getattr(FileNode *fnode, struct stat *stbuf) {
   int res = fnode->getAttr(stbuf);
   if (res == ESUCCESS && S_ISLNK(stbuf->st_mode)) {
     EncFS_Context *ctx = context();
-    shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
+    std::shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
     if (FSRoot) {
       // determine plaintext link size..  Easiest to read and decrypt..
       std::vector<char> buf(stbuf->st_size + 1, '\0');
@@ -169,8 +178,9 @@ int _do_getattr(FileNode *fnode, struct stat *stbuf) {
         stbuf->st_size = FSRoot->plainPath(buf.data()).length();
 
         res = ESUCCESS;
-      } else
+      } else {
         res = -errno;
+      }
     }
   }
 
@@ -186,18 +196,19 @@ int encfs_fgetattr(const char *path, struct stat *stbuf,
   return withFileNode("fgetattr", path, fi, bind(_do_getattr, _1, stbuf));
 }
 
-int encfs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler) {
+int encfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
+                  off_t offset, struct fuse_file_info *finfo) {
   EncFS_Context *ctx = context();
 
   int res = ESUCCESS;
-  shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
+  std::shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
   if (!FSRoot) return res;
 
   try {
 
     DirTraverse dt = FSRoot->openDir(path);
 
-    rLog(Info, "getdir on %s", FSRoot->cipherPath(path).c_str());
+    VLOG(1) << "readdir on " << FSRoot->cipherPath(path);
 
     if (dt.valid()) {
       int fileType = 0;
@@ -205,20 +216,26 @@ int encfs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler) {
 
       std::string name = dt.nextPlaintextName(&fileType, &inode);
       while (!name.empty()) {
-        res = filler(h, name.c_str(), fileType, inode);
+        struct stat st;
+        st.st_ino = inode;
+        st.st_mode = fileType << 12;
 
-        if (res != ESUCCESS) break;
+// TODO: add offset support.
+#if defined(fuse_fill_dir_flags)
+        if (filler(buf, name.c_str(), &st, 0, 0)) break;
+#else
+        if (filler(buf, name.c_str(), &st, 0)) break;
+#endif
 
         name = dt.nextPlaintextName(&fileType, &inode);
       }
     } else {
-      rInfo("getdir request invalid, path: '%s'", path);
+      VLOG(1) << "readdir request invalid, path: '" << path << "'";
     }
 
     return res;
-  } catch (rlog::Error &err) {
-    rError("Error caught in getdir");
-    err.log(_RLWarningChannel);
+  } catch (encfs::Error &err) {
+    RLOG(ERROR) << "Error caught in readdir";
     return -EIO;
   }
 }
@@ -229,14 +246,14 @@ int encfs_mknod(const char *path, mode_t mode, dev_t rdev) {
   if (isReadOnly(ctx)) return -EROFS;
 
   int res = -EIO;
-  shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
+  std::shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
   if (!FSRoot) return res;
 
   try {
-    shared_ptr<FileNode> fnode = FSRoot->lookupNode(path, "mknod");
+    std::shared_ptr<FileNode> fnode = FSRoot->lookupNode(path, "mknod");
 
-    rLog(Info, "mknod on %s, mode %i, dev %" PRIi64, fnode->cipherName(), mode,
-         (int64_t)rdev);
+    VLOG(1) << "mknod on " << fnode->cipherName() << ", mode " << mode
+            << ", dev " << rdev;
 
     uid_t uid = 0;
     gid_t gid = 0;
@@ -250,16 +267,16 @@ int encfs_mknod(const char *path, mode_t mode, dev_t rdev) {
     if (ctx->publicFilesystem && -res == EACCES) {
       // try again using the parent dir's group
       string parent = fnode->plaintextParent();
-      rInfo("trying public filesystem workaround for %s", parent.c_str());
-      shared_ptr<FileNode> dnode = FSRoot->lookupNode(parent.c_str(), "mknod");
+      VLOG(1) << "trying public filesystem workaround for " << parent;
+      std::shared_ptr<FileNode> dnode =
+          FSRoot->lookupNode(parent.c_str(), "mknod");
 
       struct stat st;
       if (dnode->getAttr(&st) == 0)
         res = fnode->mknod(mode, rdev, uid, st.st_gid);
     }
-  } catch (rlog::Error &err) {
-    rError("error caught in mknod");
-    err.log(_RLWarningChannel);
+  } catch (encfs::Error &err) {
+    RLOG(ERROR) << "error caught in mknod: " << err.what();
   }
   return res;
 }
@@ -271,7 +288,7 @@ int encfs_mkdir(const char *path, mode_t mode) {
   if (isReadOnly(ctx)) return -EROFS;
 
   int res = -EIO;
-  shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
+  std::shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
   if (!FSRoot) return res;
 
   try {
@@ -286,15 +303,15 @@ int encfs_mkdir(const char *path, mode_t mode) {
     if (ctx->publicFilesystem && -res == EACCES) {
       // try again using the parent dir's group
       string parent = parentDirectory(path);
-      shared_ptr<FileNode> dnode = FSRoot->lookupNode(parent.c_str(), "mkdir");
+      std::shared_ptr<FileNode> dnode =
+          FSRoot->lookupNode(parent.c_str(), "mkdir");
 
       struct stat st;
       if (dnode->getAttr(&st) == 0)
         res = FSRoot->mkdir(path, mode, uid, st.st_gid);
     }
-  } catch (rlog::Error &err) {
-    rError("error caught in mkdir");
-    err.log(_RLWarningChannel);
+  } catch (encfs::Error &err) {
+    RLOG(ERROR) << "error caught in mkdir: " << err.what();
   }
   return res;
 }
@@ -305,16 +322,15 @@ int encfs_unlink(const char *path) {
   if (isReadOnly(ctx)) return -EROFS;
 
   int res = -EIO;
-  shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
+  std::shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
   if (!FSRoot) return res;
 
   try {
     // let DirNode handle it atomically so that it can handle race
     // conditions
     res = FSRoot->unlink(path);
-  } catch (rlog::Error &err) {
-    rError("error caught in unlink");
-    err.log(_RLWarningChannel);
+  } catch (encfs::Error &err) {
+    RLOG(ERROR) << "error caught in unlink: " << err.what();
   }
   return res;
 }
@@ -331,7 +347,7 @@ int encfs_rmdir(const char *path) {
 int _do_readlink(EncFS_Context *ctx, const string &cyName, char *buf,
                  size_t size) {
   int res = ESUCCESS;
-  shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
+  std::shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
   if (!FSRoot) return res;
 
   res = ::readlink(cyName.c_str(), buf, size - 1);
@@ -343,6 +359,7 @@ int _do_readlink(EncFS_Context *ctx, const string &cyName, char *buf,
   try {
     decodedName = FSRoot->plainPath(buf);
   } catch (...) {
+    VLOG(1) << "caught error decoding path";
   }
 
   if (!decodedName.empty()) {
@@ -351,7 +368,7 @@ int _do_readlink(EncFS_Context *ctx, const string &cyName, char *buf,
 
     return ESUCCESS;
   } else {
-    rWarning("Error decoding link");
+    RLOG(WARNING) << "Error decoding link";
     return -1;
   }
 }
@@ -370,7 +387,7 @@ int encfs_symlink(const char *to, const char *from) {
   if (isReadOnly(ctx)) return -EROFS;
 
   int res = -EIO;
-  shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
+  std::shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
   if (!FSRoot) return res;
 
   try {
@@ -378,7 +395,7 @@ int encfs_symlink(const char *to, const char *from) {
     // allow fully qualified names in symbolic links.
     string toCName = FSRoot->relativeCipherPath(to);
 
-    rLog(Info, "symlink %s -> %s", fromCName.c_str(), toCName.c_str());
+    VLOG(1) << "symlink " << fromCName << " -> " << toCName;
 
     // use setfsuid / setfsgid so that the new link will be owned by the
     // uid/gid provided by the fuse_context.
@@ -397,9 +414,8 @@ int encfs_symlink(const char *to, const char *from) {
       res = -errno;
     else
       res = ESUCCESS;
-  } catch (rlog::Error &err) {
-    rError("error caught in symlink");
-    err.log(_RLWarningChannel);
+  } catch (encfs::Error &err) {
+    RLOG(ERROR) << "error caught in symlink: " << err.what();
   }
   return res;
 }
@@ -410,14 +426,13 @@ int encfs_link(const char *from, const char *to) {
   if (isReadOnly(ctx)) return -EROFS;
 
   int res = -EIO;
-  shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
+  std::shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
   if (!FSRoot) return res;
 
   try {
     res = FSRoot->link(from, to);
-  } catch (rlog::Error &err) {
-    rError("error caught in link");
-    err.log(_RLWarningChannel);
+  } catch (encfs::Error &err) {
+    RLOG(ERROR) << "error caught in link: " << err.what();
   }
   return res;
 }
@@ -428,14 +443,13 @@ int encfs_rename(const char *from, const char *to) {
   if (isReadOnly(ctx)) return -EROFS;
 
   int res = -EIO;
-  shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
+  std::shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
   if (!FSRoot) return res;
 
   try {
     res = FSRoot->rename(from, to);
-  } catch (rlog::Error &err) {
-    rError("error caught in rename");
-    err.log(_RLWarningChannel);
+  } catch (encfs::Error &err) {
+    RLOG(ERROR) << "error caught in rename: " << err.what();
   }
   return res;
 }
@@ -483,6 +497,9 @@ int encfs_utime(const char *path, struct utimbuf *buf) {
 
 int _do_utimens(EncFS_Context *, const string &cyName,
                 const struct timespec ts[2]) {
+#ifdef HAVE_UTIMENSAT
+  int res = utimensat(AT_FDCWD, cyName.c_str(), ts, AT_SYMLINK_NOFOLLOW);
+#else
   struct timeval tv[2];
   tv[0].tv_sec = ts[0].tv_sec;
   tv[0].tv_usec = ts[0].tv_nsec / 1000;
@@ -490,6 +507,7 @@ int _do_utimens(EncFS_Context *, const string &cyName,
   tv[1].tv_usec = ts[1].tv_nsec / 1000;
 
   int res = lutimes(cyName.c_str(), tv);
+#endif
   return (res == -1) ? -errno : ESUCCESS;
 }
 
@@ -505,28 +523,37 @@ int encfs_open(const char *path, struct fuse_file_info *file) {
     return -EROFS;
 
   int res = -EIO;
-  shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
+  std::shared_ptr<DirNode> FSRoot = ctx->getRoot(&res);
   if (!FSRoot) return res;
 
   try {
-    shared_ptr<FileNode> fnode =
+    std::shared_ptr<FileNode> fnode =
         FSRoot->openNode(path, "open", file->flags, &res);
 
     if (fnode) {
-      rLog(Info, "encfs_open for %s, flags %i", fnode->cipherName(),
-           file->flags);
+      VLOG(1) << "encfs_open for " << fnode->cipherName() << ", flags "
+              << file->flags;
 
       if (res >= 0) {
-        file->fh = (uintptr_t)ctx->putNode(path, fnode);
+        file->fh =
+            reinterpret_cast<uintptr_t>(ctx->putNode(path, std::move(fnode)));
         res = ESUCCESS;
       }
     }
-  } catch (rlog::Error &err) {
-    rError("error caught in open");
-    err.log(_RLWarningChannel);
+  } catch (encfs::Error &err) {
+    RLOG(ERROR) << "error caught in open: " << err.what();
   }
 
   return res;
+}
+
+int encfs_create(const char *path, mode_t mode, struct fuse_file_info *file) {
+  int res = encfs_mknod(path, mode, 0);
+  if (res) {
+    return res;
+  }
+
+  return encfs_open(path, file);
 }
 
 int _do_flush(FileNode *fnode) {
@@ -537,8 +564,14 @@ int _do_flush(FileNode *fnode) {
   int res = fnode->open(O_RDONLY);
   if (res >= 0) {
     int fh = res;
-    res = close(dup(fh));
-    if (res == -1) res = -errno;
+    int nfh = dup(fh);
+    if (nfh == -1) {
+      return -errno;
+    }
+    res = close(nfh);
+    if (res == -1) {
+      return -errno;
+    }
   }
 
   return res;
@@ -558,11 +591,10 @@ int encfs_release(const char *path, struct fuse_file_info *finfo) {
   EncFS_Context *ctx = context();
 
   try {
-    ctx->eraseNode(path, (void *)(uintptr_t) finfo->fh);
+    ctx->eraseNode(path, reinterpret_cast<FileNode *>(finfo->fh));
     return ESUCCESS;
-  } catch (rlog::Error &err) {
-    rError("error caught in release");
-    err.log(_RLWarningChannel);
+  } catch (encfs::Error &err) {
+    RLOG(ERROR) << "error caught in release: " << err.what();
     return -EIO;
   }
 }
@@ -610,16 +642,15 @@ int encfs_statfs(const char *path, struct statvfs *st) {
     rAssert(st != NULL);
     string cyName = ctx->rootCipherDir;
 
-    rLog(Info, "doing statfs of %s", cyName.c_str());
+    VLOG(1) << "doing statfs of " << cyName;
     res = statvfs(cyName.c_str(), st);
     if (!res) {
       // adjust maximum name length..
       st->f_namemax = 6 * (st->f_namemax - 2) / 8;  // approx..
     }
     if (res == -1) res = -errno;
-  } catch (rlog::Error &err) {
-    rError("error caught in statfs");
-    err.log(_RLWarningChannel);
+  } catch (encfs::Error &err) {
+    RLOG(ERROR) << "error caught in statfs: " << err.what();
   }
   return res;
 }
@@ -709,5 +740,7 @@ int encfs_removexattr(const char *path, const char *name) {
   return withCipherPath("removexattr", path,
                         bind(_do_removexattr, _1, _2, name));
 }
+
+}  // namespace encfs
 
 #endif  // HAVE_XATTR
