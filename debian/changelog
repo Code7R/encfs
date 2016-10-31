@@ -1,6 +1,7 @@
-encfs (1.9.1-1) UNRELEASED; urgency=medium
+encfs (1.9.1-1) experimental; urgency=low
 
   * New upstream release
+  * debian/patches/libssl1.1 -- Experimental SSL 1.1 support from https://github.com/vgough/encfs/pull/230
 
  -- Eduard Bloch <blade@debian.org>  Sun, 30 Oct 2016 23:37:46 +0100
 
