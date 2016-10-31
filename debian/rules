@@ -8,7 +8,7 @@ include /usr/share/dpkg/architecture.mk
 #ifeq (,$(findstring mips,$(DEB_HOST_MULTIARCH)))
 CFLAGS += -flto
 CXXFLAGS += -flto
-LDFLAGS += -flto
+LDFLAGS += -flto -Wl,--as-needed
 #endif
 
 %:
