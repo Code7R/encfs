@@ -15,7 +15,7 @@ LDFLAGS += -flto -Wl,--as-needed
 	dh $@ --parallel
 
 override_dh_auto_configure:
-	dh_auto_configure -- -DUSE_INTERNAL_TINYXML=off -DBUILD_SHARED_LIBS=on -DINSTALL_LIBENCFS=on -DCMAKE_SKIP_BUILD_RPATH=on
+	dh_auto_configure -- -DUSE_INTERNAL_TINYXML=off -DBUILD_SHARED_LIBS=on -DINSTALL_LIBENCFS=on -DCMAKE_SKIP_RPATH=on
 
 ifneq ($(DOENCFSTESTS),FORCE)
 # needs configured fuse -> ignore
