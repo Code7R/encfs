@@ -1,9 +1,12 @@
 encfs (1.9.1-1) experimental; urgency=low
 
   * New upstream release
+    + handles recursive directory traversal (closes: #805568)
   * watch file update (closes: #842287)
   * debian/patches/libssl1.1 -- Experimental SSL 1.1 support from
-    https://github.com/vgough/encfs/pull/230 (closes: #828293)
+    master branch (closes: #828293)
+  * Swedish debconf translation by Jonatan Nyberg (closes: #822102)
+  * Require non-ancient version of mount (closes: #628238)
 
  -- Eduard Bloch <blade@debian.org>  Sun, 30 Oct 2016 23:37:46 +0100
 
