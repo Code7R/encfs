@@ -1,3 +1,9 @@
+encfs (1.9.1-2) experimental; urgency=low
+
+  * Fixed build-dependencies: cmake 3.2 or newer (closes: #828293)
+
+ -- Eduard Bloch <blade@debian.org>  Tue, 15 Nov 2016 19:48:53 +0100
+
 encfs (1.9.1-1) experimental; urgency=low
 
   * New upstream release
