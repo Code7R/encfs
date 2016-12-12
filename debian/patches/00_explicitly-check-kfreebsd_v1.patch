@@ -1,0 +1,22 @@
+Description: Detect KFreeBSD
+ Seems that __FreeBSD__ preprocessor macro is not provided by KFreeBSD.
+ Add an ad-hoc test for it and tag it as FreeBSD
+Author: Agustin Martin Domingo <agmartin@debian.org>
+Last-Update: 2016-12-09
+
+--- a/internal/easylogging++.h
++++ b/internal/easylogging++.h
+@@ -94,7 +94,12 @@
+ #else
+ #   define ELPP_OS_MAC 0
+ #endif
+-#if (defined(__FreeBSD__))
++#if (defined(__FreeBSD_kernel__) && defined(__GLIBC__))
++#   define ELPP_OS_KFREEBSD 1
++#else
++#   define ELPP_OS_KFREEBSD 0
++#endif
++#if (defined(__FreeBSD__) || ELPP_OS_KFREEBSD)
+ #   define ELPP_OS_FREEBSD 1
+ #else
+ #   define ELPP_OS_FREEBSD 0

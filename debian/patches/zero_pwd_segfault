@@ -1,0 +1,34 @@
+commit c3a7da5eff4055e77dc9404b0c15945485232bf2
+Author: Ian Lee <ian.rob.lee@gmail.com>
+Date:   Mon Oct 31 14:38:56 2016 +0000
+
+    Fix a segfault when password is zero length.
+    
+    if useStdin and configMode == Config_Prompt, default to Config_Standard,
+    otherwise we might read the password input at the wrong place.
+
+diff --git a/encfs/FileUtils.cpp b/encfs/FileUtils.cpp
+index 39a3b88..edd2b71 100644
+--- a/encfs/FileUtils.cpp
++++ b/encfs/FileUtils.cpp
+@@ -956,7 +956,9 @@ RootPtr createV6Config(EncFS_Context *ctx,
+   const std::string passwordProgram = opts->passwordProgram;
+   bool useStdin = opts->useStdin;
+   bool reverseEncryption = opts->reverseEncryption;
+-  ConfigMode configMode = opts->configMode;
++  ConfigMode configMode = (useStdin &&
++                           opts->configMode == Config_Prompt) ? Config_Standard
++                                                              : opts->configMode;
+   bool annotate = opts->annotate;
+ 
+   RootPtr rootInfo;
+@@ -1169,6 +1171,9 @@ RootPtr createV6Config(EncFS_Context *ctx,
+   else
+     userKey = config->getNewUserKey();
+ 
++  if (userKey == nullptr)
++    return rootInfo;
++
+   cipher->writeKey(volumeKey, encodedKey, userKey);
+   userKey.reset();
+ 
