@@ -1,9 +1,12 @@
 encfs (1.9.1-4) unstable; urgency=high
 
-  * Replaced zero_pwd_segfault patch with another fix from upstream branch
-    which forces a clean exit instead of a behavior that confused some encfs
-    frontends (closes: #853916)
-    (source: 5994b28542e7f551b71ac471ff9aacf6dcd5a3b0 / Jakob Unterwurzacher)
+  * Cherry-picked from upstream:
+    + Replaced zero_pwd_segfault patch with another fix from upstream branch
+      which forces a clean exit instead of a behavior that confused some encfs
+      frontends (closes: #853916)
+      (source: 5994b28542e7f551b71ac471ff9aacf6dcd5a3b0 / Jakob Unterwurzacher)
+    + improve_example: safer command execution example with quotes ("$*")
+      (source: ecc364df0d7269c65d2858039aaeaf27ea0e4da6 / Charles Duffy)
 
  -- Eduard Bloch <blade@debian.org>  Tue, 14 Feb 2017 23:03:28 +0100
 

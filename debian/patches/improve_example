@@ -1,0 +1,29 @@
+commit ecc364df0d7269c65d2858039aaeaf27ea0e4da6
+Author: Charles Duffy <chaduffy@cisco.com>
+Date:   Thu Dec 22 16:37:12 2016 -0600
+
+    Suggest "$@", not $*, in documentation
+    
+    `$*` operates by:
+    
+    - Concatenating all arguments with the first character in `IFS` (by default a space) into a single string
+    - Splitting that string on all characters found in `IFS` to join a list of words
+    - Expanding each of those words as a glob character
+    
+    Thus, using `$*` in a wrapper means that an argument such as `"one word"` becomes two arguments, `one` and `word`, and an argument `'*.txt'` can be replaced with an entirely unknown number of arguments (`one.txt`, `two.txt`) despite its quoting.
+    
+    Use `"$@"` to pass an argument vector through literally without any kind of expansion.
+
+diff --git a/encfs/encfs.pod b/encfs/encfs.pod
+index 0d4085c..982f9b5 100644
+--- a/encfs/encfs.pod
++++ b/encfs/encfs.pod
+@@ -182,7 +182,7 @@ Note that encfs arguments cannot be set this way.  If you need to set encfs
+ arguments, create a wrapper, such as  encfs-reverse;
+ 
+     #!/bin/sh
+-    encfs --reverse $*
++    encfs --reverse "$@"
+ 
+ Then mount using the script path
+ 
