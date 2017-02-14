@@ -1,3 +1,12 @@
+encfs (1.9.1-4) unstable; urgency=high
+
+  * Replaced zero_pwd_segfault patch with another fix from upstream branch
+    which forces a clean exit instead of a behavior that confused some encfs
+    frontends (closes: #853916)
+    (source: 5994b28542e7f551b71ac471ff9aacf6dcd5a3b0 / Jakob Unterwurzacher)
+
+ -- Eduard Bloch <blade@debian.org>  Tue, 14 Feb 2017 23:03:28 +0100
+
 encfs (1.9.1-3) unstable; urgency=medium
 
   * Uploading to Sid

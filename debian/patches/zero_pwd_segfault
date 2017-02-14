@@ -1,34 +1,44 @@
-commit c3a7da5eff4055e77dc9404b0c15945485232bf2
-Author: Ian Lee <ian.rob.lee@gmail.com>
-Date:   Mon Oct 31 14:38:56 2016 +0000
+commit 5994b28542e7f551b71ac471ff9aacf6dcd5a3b0
+Author: Jakob Unterwurzacher <jakobunt@gmail.com>
+Date:   Sun Feb 5 13:52:48 2017 +0100
 
-    Fix a segfault when password is zero length.
+    Exit with a fatal error on empty password
     
-    if useStdin and configMode == Config_Prompt, default to Config_Standard,
-    otherwise we might read the password input at the wrong place.
+    The requirement that the password is not empty was not enforced
+    properly in all getUserKey() variants. Add the check to makeKey()
+    instead that is called in every code path.
+    
+    This also fixes the crash desribed at https://github.com/vgough/encfs/issues/241 .
 
 diff --git a/encfs/FileUtils.cpp b/encfs/FileUtils.cpp
-index 39a3b88..edd2b71 100644
+index 39a3b88..f50d007 100644
 --- a/encfs/FileUtils.cpp
 +++ b/encfs/FileUtils.cpp
-@@ -956,7 +956,9 @@ RootPtr createV6Config(EncFS_Context *ctx,
-   const std::string passwordProgram = opts->passwordProgram;
-   bool useStdin = opts->useStdin;
-   bool reverseEncryption = opts->reverseEncryption;
--  ConfigMode configMode = opts->configMode;
-+  ConfigMode configMode = (useStdin &&
-+                           opts->configMode == Config_Prompt) ? Config_Standard
-+                                                              : opts->configMode;
-   bool annotate = opts->annotate;
+@@ -1348,6 +1348,11 @@ CipherKey EncFSConfig::makeKey(const char *password, int passwdLen) {
+   CipherKey userKey;
+   std::shared_ptr<Cipher> cipher = getCipher();
  
-   RootPtr rootInfo;
-@@ -1169,6 +1171,9 @@ RootPtr createV6Config(EncFS_Context *ctx,
-   else
-     userKey = config->getNewUserKey();
- 
-+  if (userKey == nullptr)
-+    return rootInfo;
++  if (passwdLen == 0) {
++    cerr << _("fatal: zero-length passwords are not allowed\n");
++    exit(1);
++  }
 +
-   cipher->writeKey(volumeKey, encodedKey, userKey);
-   userKey.reset();
+   // if no salt is set and we're creating a new password for a new
+   // FS type, then initialize salt..
+   if (salt.size() == 0 && kdfIterations == 0 && cfgType >= Config_V6) {
+@@ -1389,10 +1394,12 @@ CipherKey EncFSConfig::getUserKey(bool useStdin) {
+   }
+ 
+   CipherKey userKey;
+-  if (!res)
+-    cerr << _("Zero length password not allowed\n");
+-  else
++  if (!res) {
++    cerr << _("fatal: error reading password\n");
++    exit(1);
++  } else {
+     userKey = makeKey(passBuf, strlen(passBuf));
++  }
+ 
+   memset(passBuf, 0, sizeof(passBuf));
  
