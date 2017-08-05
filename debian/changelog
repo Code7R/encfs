@@ -1,6 +1,7 @@
 encfs (1.9.2-1) unstable; urgency=low
 
   * New upstream release
+  * Verified to build with latest GCC-7 (closes: #853390)
   * Dropped all debian patches (now applied upstream)
 
  -- Eduard Bloch <blade@debian.org>  Sat, 05 Aug 2017 15:55:43 +0200
