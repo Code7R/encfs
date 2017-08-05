@@ -1,7 +1,0 @@
-libssl1.1
-00_explicitly-check-kfreebsd_v0.patch
-00_explicitly-check-kfreebsd_v1.patch
-manpage_fixes
-zero_pwd_segfault
-deprecate_RAND_pseudo_bytes 
-improve_example

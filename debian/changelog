@@ -1,3 +1,10 @@
+encfs (1.9.2-1) unstable; urgency=low
+
+  * New upstream release
+  * Dropped all debian patches (now applied upstream)
+
+ -- Eduard Bloch <blade@debian.org>  Sat, 05 Aug 2017 15:55:43 +0200
+
 encfs (1.9.1-4) unstable; urgency=high
 
   * Cherry-picked from upstream:
