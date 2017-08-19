@@ -1,6 +1,8 @@
 encfs (1.9.2-2) unstable; urgency=low
 
   * Move encfs library to a custom folder (closes: #871270)
+  * linkatomic.patch: attempt to link with libatomic where available but
+    reducing linker references where possible (closes: #872565)
 
  -- Eduard Bloch <blade@debian.org>  Sat, 19 Aug 2017 12:00:02 +0200
 
