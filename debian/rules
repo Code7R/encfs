@@ -5,20 +5,19 @@ include /usr/share/dpkg/buildflags.mk
 include /usr/share/dpkg/architecture.mk
 -include /usr/share/quilt/quilt.make
 
-#ifeq (,$(findstring mips,$(DEB_HOST_MULTIARCH)))
 CFLAGS += -flto
 CXXFLAGS += -flto
 LDFLAGS += -flto -Wl,--as-needed
-#endif
 
 %:
 	dh $@ --parallel
 
 override_dh_auto_configure:
-	dh_auto_configure -- -DUSE_INTERNAL_TINYXML=off -DBUILD_SHARED_LIBS=on -DINSTALL_LIBENCFS=on -DCMAKE_SKIP_RPATH=on
+	# keep cmake's default rpath handling with rewritting on installation but target a custom folder
+	dh_auto_configure -- -DUSE_INTERNAL_TINYXML=off -DBUILD_SHARED_LIBS=on -DINSTALL_LIBENCFS=on -DLIB_INSTALL_DIR=lib/encfs
 
 ifneq ($(DOENCFSTESTS),FORCE)
-# needs configured fuse -> ignore
+# needs fuse kernel module -> ignore
 override_dh_auto_test:
 	true
 endif

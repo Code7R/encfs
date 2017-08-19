@@ -1,3 +1,9 @@
+encfs (1.9.2-2) unstable; urgency=low
+
+  * Move encfs library to a custom folder (closes: #871270)
+
+ -- Eduard Bloch <blade@debian.org>  Sat, 19 Aug 2017 12:00:02 +0200
+
 encfs (1.9.2-1) unstable; urgency=low
 
   * New upstream release
