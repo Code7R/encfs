@@ -6,7 +6,7 @@ encfs (1.9.2-2) unstable; urgency=low
   * Swedish translation update by Jonatan Nyberg (closes: #855365)
   * Fixed references to deprecated fuse-utils package (closes: #872332)
 
- -- Eduard Bloch <blade@debian.org>  Sat, 19 Aug 2017 12:00:02 +0200
+ -- Eduard Bloch <blade@debian.org>  Sat, 19 Aug 2017 12:39:00 +0200
 
 encfs (1.9.2-1) unstable; urgency=low
 
