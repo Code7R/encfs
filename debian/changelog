@@ -4,6 +4,7 @@ encfs (1.9.2-2) unstable; urgency=low
   * linkatomic.patch: attempt to link with libatomic where available but
     reducing linker references where possible (closes: #872565)
   * Swedish translation update by Jonatan Nyberg (closes: #855365)
+  * Fixed references to deprecated fuse-utils package (closes: #872332)
 
  -- Eduard Bloch <blade@debian.org>  Sat, 19 Aug 2017 12:00:02 +0200
 
